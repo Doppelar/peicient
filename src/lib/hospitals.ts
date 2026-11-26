@@ -12,6 +12,8 @@ export type Hospital = {
   counts: Record<string, DpcCount>;
   /** 院内がん登録での区分（拠点病院・拠点外病院・小児がん病院）。対象外ならなし */
   hbcr?: string;
+  /** 所在地の [経度, 緯度]（医療情報ネット）。わからなければなし（市区町村の中心に置く） */
+  ll?: [number, number];
 };
 
 /** 表示用。伏せられた区分があるときは「以上」を付ける。 */

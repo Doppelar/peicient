@@ -145,7 +145,7 @@ function Estimator({ data }: { data: Data }) {
   const flowHospitals = site.reg ? points.filter(({ h }) => detail?.hospitals[h.id]?.[site.reg!]?.["住所"]?.[flowYear]) : [];
   const pickedPoint = flowHospitals.find(({ h }) => h.id === picked);
   const pickedFlow = pickedPoint && site.reg
-    ? { name: shortHospitalName(pickedPoint.h.name), muni: pickedPoint.h.muni, from: detail?.hospitalFlows?.[site.reg]?.[flowYear]?.[pickedPoint.h.id] ?? [] }
+    ? { name: shortHospitalName(pickedPoint.h.name), muni: pickedPoint.h.muni, ll: pickedPoint.h.ll, from: detail?.hospitalFlows?.[site.reg]?.[flowYear]?.[pickedPoint.h.id] ?? [] }
     : undefined;
   const pickedHome = pickedPoint && site.reg ? detail?.hospitals[pickedPoint.h.id]?.[site.reg]?.["住所"]?.[flowYear] : undefined;
 
@@ -301,7 +301,7 @@ function Estimator({ data }: { data: Data }) {
           </div>
           <p className="mb-1 px-1 text-xs text-slate-500">
             {pickedFlow
-              ? <>院内がん登録の「住所」から、{pickedFlow.name}で{flowYear}年に登録された人がどこに住んでいるかを示します。{pickedHome && <b className="text-slate-700">{pref}内 {formatReg(toRegCount(pickedHome[0]))}人（{formatShare(regShare(pickedHome, [0]))}）・{pref}の外 {formatReg(toRegCount(pickedHome[1]))}人（{formatShare(regShare(pickedHome, [1]))}）。</b>}内訳は10件以上の病院だけ公表されています。</>
+              ? <>院内がん登録の「住所」から、{pickedFlow.name}で{flowYear}年に登録された人がどこに住んでいるかを示します。{pickedHome && <b className="text-slate-700">{pref}内 {formatReg(toRegCount(pickedHome[0]))}人（{formatShare(regShare(pickedHome, [0]))}）・{pref}の外 {formatReg(toRegCount(pickedHome[1]))}人（{formatShare(regShare(pickedHome, [1]))}）。</b>}内訳は10件以上の病院だけ公表されています。{!pickedPoint?.h.ll && "この病院は正確な所在地が見つからないため、所在市区町村の中心に置いています。"}</>
               : <>院内がん登録の「住所」の集計から、{pref}の参加病院に他県から来た人と、{pref}に住んでいて他県の参加病院で登録された人を矢印で示します（{flowYear}年診断）。参加病院だけの数で、3件以下は「1〜3」のような幅です。上の地図で病院の丸を押すか、右上で選ぶと、その病院の分になります。</>}
           </p>
           <FlowMap prefCode={prefCode} flows={detail.flows[site.reg][flowYear]} year={flowYear} site={site.reg} hospital={pickedFlow} />
@@ -637,7 +637,7 @@ function Notes({ meta }: { meta: Meta }) {
         <li>地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
       </ul>
       <p>
-        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）・「院内がん登録 部位別登録数」／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
+        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）・「院内がん登録 部位別登録数」／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）・「医療情報ネット」オープンデータ（病院の所在地）／国土地理院 住所検索／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
       </p>
     </section>
   );

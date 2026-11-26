@@ -347,12 +347,104 @@ const meta = {
   ageBins: [...Array.from({ length: 17 }, (_, i) => `${i * 5}-${i * 5 + 4}歳`), "85歳以上"],
 };
 
+// ---- 病院の位置：厚生労働省「医療情報ネット」オープンデータの病院（施設票）の緯度経度 ----
+// hospital_facility_info_<日付>.csv を置くと、病院名と所在都道府県（できれば市区町村）で結びつけて ll = [経度, 緯度] を持たせる
+const geoFile = readdirSync(src).filter((x) => /hospital_facility_info_\d+\.csv$/.test(x)).sort().at(-1);
+let geoMatched = 0;
+const geoMissed = [];
+// 住所 → [経度, 緯度]（国土地理院の住所検索）。結果は scripts/geocode-cache.json に残して使い回す
+const geocodeCachePath = new URL("./geocode-cache.json", import.meta.url);
+const geocodeCache = (() => { try { return JSON.parse(readFileSync(geocodeCachePath, "utf8")); } catch { return {}; } })();
+async function geocode(addr) {
+  if (!addr) return null;
+  if (addr in geocodeCache) return geocodeCache[addr];
+  const res = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(addr)}`).then((r) => r.json()).catch(() => []);
+  const c = res[0]?.geometry?.coordinates;
+  geocodeCache[addr] = c ? [Math.round(c[0] * 1e5) / 1e5, Math.round(c[1] * 1e5) / 1e5] : null;
+  await new Promise((ok) => setTimeout(ok, 200)); // 間をあけて問い合わせる
+  return geocodeCache[addr];
+}
+if (geoFile) {
+  const parseCsvLine = (l) => {
+    const r = [];
+    let cur = "";
+    let q = false;
+    for (let i = 0; i < l.length; i++) {
+      const c = l[i];
+      if (q) {
+        if (c === '"') { if (l[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ",") { r.push(cur); cur = ""; } else cur += c;
+    }
+    r.push(cur);
+    return r;
+  };
+  const [head, ...lines] = readFileSync(join(src, geoFile), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean).map(parseCsvLine);
+  const col = (n) => head.indexOf(n);
+  const [iName, iShort, iPref, iMuni, iAddr, iLat, iLon] = ["正式名称", "略称", "都道府県コード", "市区町村コード", "所在地", "所在地座標（緯度）", "所在地座標（経度）"].map(col);
+  // 名前の表記ゆれ（空白の有無・旧字）をそろえた照合用の名前の候補
+  const variants = (x) => {
+    const t = String(x).replace(/廣/g, "広").replace(/濱/g, "浜").replace(/澤/g, "沢");
+    return [normName(t), normName(t.replace(/[s　]+/g, ""))];
+  };
+  const raw = (x) => String(x).normalize("NFKC").replace(/s+/g, "");
+  // 改称・表記違いで名前から結びつかない病院（院内がん登録・DPC の名前 → 医療情報ネットの正式名称）
+  const RENAMED = {
+    東京医科歯科大学: "東京科学大学病院",
+    名古屋第一赤十字病院: "日本赤十字社愛知医療センター名古屋第一病院",
+    名古屋第二赤十字病院: "日本赤十字社愛知医療センター名古屋第二病院",
+    大阪市立大学医学部附属病院: "大阪公立大学医学部附属病院",
+    第二大阪警察病院: "大阪けいさつ病院",
+    "茨城県立中央病院・茨城県地域がんセンター": "茨城県立中央病院",
+    東京女子医科大学八千代医療センター: "東京女子医科大学附属八千代医療センター",
+    "東邦大学医療センタ-佐倉病院": "東邦大学医療センター佐倉病院",
+    東京都保健医療公社豊島病院: "東京都立豊島病院",
+    南奈良総合医療センター: "南奈良総合医療センター（災害拠点病院）",
+    "紀南病院(和歌山)": "紀南病院",
+    "沖縄県立南部医療センター・こども医療センター": "沖縄県立南部医療センター・こどもセンター",
+  };
+  const renamed = (name) => Object.entries(RENAMED).find(([k]) => raw(name).includes(raw(k)))?.[1];
+  const byPref = new Map();
+  for (const r of lines) {
+    const lat = Number(r[iLat]);
+    const lon = Number(r[iLon]);
+    const pref = r[iPref].padStart(2, "0");
+    // 緯度経度が 0 の施設もあるので、そのときは住所から引く（下の geocode）
+    const e = { muni: pref + r[iMuni].padStart(3, "0"), names: [...new Set([r[iName], r[iShort]].filter(Boolean).flatMap(variants))], raw: raw(r[iName]), addr: r[iAddr], ll: lat && lon ? [Math.round(lon * 1e5) / 1e5, Math.round(lat * 1e5) / 1e5] : null };
+    byPref.set(pref, [...(byPref.get(pref) ?? []), e]);
+  }
+  // 同じ市区町村の候補があればそちらを優先し、1つに決まるときだけ使う
+  // 同名が複数あれば正式名称が完全に同じものを選ぶ
+  const pick = (list, muni, name) => {
+    const same = list.filter((e) => e.muni === muni);
+    const pool = same.length ? same : list;
+    if (pool.length === 1) return pool[0];
+    const exact = pool.filter((e) => e.raw === raw(name));
+    return exact.length === 1 ? exact[0] : null;
+  };
+  for (const h of hospitals) {
+    const pref = h.muni.slice(0, 2);
+    const ns = variants(renamed(h.name) ?? h.name);
+    const list = byPref.get(pref) ?? [];
+    const hit = pick(list.filter((e) => e.names.some((x) => ns.includes(x))), h.muni, renamed(h.name) ?? h.name)
+      ?? pick(list.filter((e) => e.names.some((x) => x.length >= 4 && ns.some((n) => n.length >= 4 && (x.endsWith(n) || n.endsWith(x))))), h.muni, h.name);
+    if (!hit) { if (h.reg) geoMissed.push(`${h.muni} ${h.name}`); continue; }
+    h.ll = hit.ll ?? (await geocode(hit.addr));
+    if (!h.ll) { delete h.ll; geoMissed.push(`${h.muni} ${h.name}（住所から位置を引けない）`); continue; }
+    if (h.muni.endsWith("000") && municipalities.has(hit.muni)) h.muni = hit.muni;
+    geoMatched++;
+  }
+  writeFileSync(geocodeCachePath, JSON.stringify(geocodeCache, null, 1));
+}
+
 writeFileSync(join(out, "meta.json"), JSON.stringify(meta));
 writeFileSync(join(out, "rates.json"), JSON.stringify(rates));
 writeFileSync(join(out, "survival.json"), JSON.stringify(survival));
 writeFileSync(join(out, "municipalities.json"), JSON.stringify(muniList));
 writeFileSync(join(out, "hospitals.json"), JSON.stringify(hospitals));
 console.log(`院内がん登録の対象と結びついた病院 ${hbcrMatched}`);
+console.log(`病院の位置（医療情報ネット）：${geoFile ?? "ファイルなし"}、結びついた ${geoMatched}／${hospitals.length}、院内がん登録の病院で見つからない ${geoMissed.length}`);
+if (geoMissed.length) console.log("  例：" + geoMissed.slice(0, 15).join("、"));
 console.log(`院内がん登録の件数：部位 ${regSites.join("・") || "なし"}、診断年 ${regYears.join(",")}、DPCの病院と結びついた ${regMatched}、DPCにない病院 ${regOnly}`);
 console.log(`がん ${SITES.length}、都道府県 ${prefs.length}、市区町村（区を含む） ${muniList.length}（人口 ${asOf}）、DPC病院 ${hospitals.length}`);
 console.log("全国の詳細部位の割合", shares);

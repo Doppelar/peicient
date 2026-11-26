@@ -46,7 +46,7 @@ function useMuniCenter(muni: string | undefined) {
 }
 
 /** 病院を選んだときの移動：病院の名前・所在市区町村と、他県から来た人 */
-export type HospitalFlow = { name: string; muni: string; from: ReadonlyArray<[number, RegDetailCount]> };
+export type HospitalFlow = { name: string; muni: string; ll?: [number, number]; from: ReadonlyArray<[number, RegDetailCount]> };
 
 /** a→b の弧（進行方向の右へふくらませ、行きと帰りが重ならないように）。端は丸に重ならないよう少し縮める。 */
 function arc(a: [number, number], b: [number, number]) {
@@ -66,7 +66,9 @@ function arc(a: [number, number], b: [number, number]) {
 
 export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: number; flows: Flow[]; year: number; site: string; hospital?: HospitalFlow }) {
   const japan = useJapan();
-  const muniCenter = useMuniCenter(hospital?.muni);
+  // 病院の位置：わかればその場所、わからなければ所在市区町村の中心
+  const muniCenter = useMuniCenter(hospital && !hospital.ll ? hospital.muni : undefined);
+  const hospitalAt = hospital?.ll ?? muniCenter;
   const { inflow, outflow } = useMemo(
     () => (hospital ? { inflow: hospitalInflow(hospital.from), outflow: [] } : flowsOf(flows, prefCode)),
     [flows, prefCode, hospital],
@@ -86,7 +88,7 @@ export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: n
     };
     const projection = geoMercator().fitExtent([[40, 40], [W - 40, H - 40]], focus);
     const path = geoPath(projection);
-    const home = projection(hospital && muniCenter ? muniCenter : self.properties.center) as [number, number];
+    const home = projection(hospital && hospitalAt ? hospitalAt : self.properties.center) as [number, number];
     // 地図の外に出る県は、自県からその県へ向かう線が地図の枠（少し内側）に当たる点に置く
     const M = 36;
     const clamp = (p: [number, number]): { p: [number, number]; far: boolean } => {
@@ -103,7 +105,7 @@ export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: n
     const center = new Map([...placed].map(([c, v]) => [c, v.p]));
     const name = new Map(japan.features.map((f) => [f.properties.code, f.properties.name]));
     return { path, center, name, partners, placed };
-  }, [japan, prefCode, inflow, outflow, hospital, muniCenter]);
+  }, [japan, prefCode, inflow, outflow, hospital, hospitalAt]);
 
   if (!japan) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">地図を読み込み中…</div>;
   if (!drawn) return null;

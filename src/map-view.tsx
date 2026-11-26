@@ -84,7 +84,7 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
         centroid.set(code, path.centroid(f) as [number, number]);
       }
     }
-    return { path, centroid };
+    return { path, centroid, projection };
   }, [geo]);
 
   const markers = useMemo(() => {
@@ -95,8 +95,12 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
     return [...byMuni].flatMap(([muni, list]) => {
       const c = drawn.centroid.get(muni);
       if (!c) return [];
+      // 位置がわかる病院はその場所に、わからない病院は市区町村の中心のまわりに少しずつずらして置く
       const offsets = spreadOffsets(list.length, 10);
-      return list.map((p, i) => ({ ...p, x: c[0] + offsets[i][0], y: c[1] + offsets[i][1], r: 3 + Math.sqrt(p.value / max) * 15 }));
+      return list.map((p, i) => {
+        const at = p.h.ll ? drawn.projection(p.h.ll) : null;
+        return { ...p, x: at ? at[0] : c[0] + offsets[i][0], y: at ? at[1] : c[1] + offsets[i][1], r: 3 + Math.sqrt(p.value / max) * 15 };
+      });
     }).sort((a, b) => b.r - a.r);
   }, [drawn, points]);
 
