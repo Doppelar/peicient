@@ -11,10 +11,11 @@ import {
 } from "./lib/estimate";
 import {
   fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
-  type CountSource, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint, type RegDetail,
+  type CountSource, type DpcCount, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint, type RegCount, type RegDetail,
 } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
 import { FlowMap } from "./flow-map";
+import { ShareBars, ShareCell, Sparkline, TrendChart, type Point, type Series } from "./charts";
 
 type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean; reg: string | null };
 type Meta = {
@@ -236,6 +237,10 @@ function Estimator({ data }: { data: Data }) {
         </div>
       )}
 
+      {tab === "map" && (
+        <TrendSection pref={pref} prefCode={prefCode} source={source} meta={meta} hospitals={data.hospitals} points={points} dpcLabel={dpcLabel} />
+      )}
+
       {tab === "map" && site.reg && detail?.flows?.[site.reg]?.[source.kind === "reg" ? source.year : meta.regYears[0]] && (
         <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <h2 className="px-1 font-semibold">都道府県をまたぐ患者の移動</h2>
@@ -357,7 +362,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
             {codes.map((c) => (
               <th key={c} className={`px-3 py-2 text-right ${c === dpc ? "text-slate-900" : ""}`}>{diseases[c]}</th>
             ))}
-            <th className="px-3 py-2">推移（{diseases[dpc]}）</th>
+            <th className="whitespace-nowrap px-3 py-2">推移（{diseases[dpc]}、{Math.min(...years)}〜{Math.max(...years)}年度）</th>
             <th className="px-3 py-2 text-right">所在地の推計患者数</th>
           </tr>
         </thead>
@@ -372,7 +377,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
                 <td key={c} className={`px-3 py-1.5 text-right tabular-nums ${c === dpc ? "font-semibold" : "text-slate-600"}`}>{formatDpc(h.counts[c])}</td>
               ))}
               <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
-                {byYear.get(h.id) ? trendOf(byYear.get(h.id)!, dpc, years).map((t) => `${String(t.year).slice(2)}:${formatDpc(t.count)}`).join(" → ") : "—"}
+                {byYear.get(h.id) ? <Sparkline years={[...years].sort((a, b) => a - b)} values={trendOf(byYear.get(h.id)!, dpc, years).map((t) => dpcPoint(t.count))} unit="件" /> : "—"}
               </td>
               <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">
                 {estimates.get(h.muni) ? `${formatCount(estimates.get(h.muni)!.annual.total)}人／年` : "—"}
@@ -383,6 +388,55 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
       </table>
       {hospitals.length === 0 && <p className="px-4 py-6 text-sm text-slate-500">この病気で10件以上の退院がある病院はありません。</p>}
     </div>
+  );
+}
+
+const regPoint = (c: RegCount | undefined): Point => (c ? { lo: c[0], hi: c[1] } : null);
+/** DPC の伏せられた区分は数えない（「以上」の値） */
+const dpcPoint = (c: DpcCount | undefined): Point => (c ? { lo: c[0], hi: c[0] } : null);
+
+/** 県全体と件数の多い病院の、年ごとの推移のグラフ */
+function TrendSection({ pref, prefCode, source, meta, hospitals, points, dpcLabel }: {
+  pref: string; prefCode: number; source: CountSource; meta: Meta; hospitals: HospitalData[]; points: HospitalPoint[]; dpcLabel: string;
+}) {
+  const pp = String(prefCode).padStart(2, "0");
+  const years = useMemo(() => [...(source.kind === "reg" ? meta.regYears : meta.dpcYears)].sort((a, b) => a - b), [source.kind, meta]);
+  const total: Series = useMemo(() => {
+    const name = `${pref}全体`;
+    if (source.kind === "reg") return { name, values: years.map((y) => regPoint(meta.regPrefTotals[source.reg]?.[y]?.[pp])) };
+    const inPref = hospitals.filter((h) => h.muni.startsWith(pp));
+    return {
+      name,
+      values: years.map((y) => {
+        const n = inPref.reduce((s, h) => s + (h.counts[y]?.[source.dpc]?.[0] ?? 0), 0);
+        return n ? { lo: n, hi: n } : null;
+      }),
+    };
+  }, [source, years, meta, hospitals, pp, pref]);
+  const top: Series[] = points.slice(0, 5).map(({ h }) => ({
+    name: shortHospitalName(h.name),
+    values: source.kind === "reg" ? regTrendOf(h, source.reg, years).map((t) => regPoint(t.count)) : trendOf(h, source.dpc, years).map((t) => dpcPoint(t.count)),
+  }));
+  const isReg = source.kind === "reg";
+  const unit = isReg ? "人" : "件";
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="font-semibold">患者数の推移</h2>
+      <p className="mb-3 text-xs text-slate-500">
+        {source.kind === "reg" ? `院内がん登録 ${source.reg}の新規登録数（診断年）。県全体は県内の参加病院の合計で、他県から来た人も含みます。縦の薄い線は「1〜3」のような幅のある件数です。` : `DPC ${dpcLabel}の退院件数（年度、のべ件数）。県全体は公表されている病院の件数（10件以上の区分）の合計です。2022年度は病院別のデータがありません。`}
+        グラフにマウスを重ねると、その年の値が出ます。
+      </p>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div>
+          <p className="mb-1 text-sm font-medium text-slate-700">{pref}全体</p>
+          <TrendChart years={years} series={[total]} unit={unit} />
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-medium text-slate-700">件数の多い病院（{source.year}{isReg ? "年" : "年度"}の上位{top.length}）</p>
+          {top.length ? <TrendChart years={years} series={top} unit={unit} /> : <p className="text-sm text-slate-500">病院がありません</p>}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -411,7 +465,7 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
   const [open, setOpen] = useState<string | null>(null);
   const rowOf = (id: string, dim: string) => detail?.hospitals[id]?.[reg]?.[dim]?.[year];
   const shareOf = (id: string, dim: string, labels: string[]) =>
-    formatShare(regShare(rowOf(id, dim), labels.map((l) => detail?.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0)));
+    regShare(rowOf(id, dim), labels.map((l) => detail?.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0));
   const hasDetail = Boolean(detail && points.some(({ h }) => detail.hospitals[h.id]?.[reg]));
   const columns = hasDetail ? SHARE_COLUMNS : [];
   return (
@@ -448,10 +502,10 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
                   <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{label}</td>
                   {columns.map(([label, dim, labels]) => (
-                    <td key={label} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600">{shareOf(h.id, dim, labels)}</td>
+                    <td key={label} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600"><ShareCell text={formatShare(shareOf(h.id, dim, labels))} pct={shareOf(h.id, dim, labels)?.pct ?? null} /></td>
                   ))}
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
-                    {regTrendOf(h, reg, years).map((t) => `${String(t.year).slice(2)}:${formatReg(t.count)}`).join(" → ")}
+                    <Sparkline years={[...years].sort((a, b) => a - b)} values={regTrendOf(h, reg, years).map((t) => regPoint(t.count))} unit="人" />
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatDpc(h.counts[dpcYear]?.[dpc])}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600">
@@ -461,21 +515,15 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
                 {isOpen && detail && (
                   <tr className="bg-slate-50">
                     <td colSpan={7 + columns.length} className="px-4 py-3">
-                      <div className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                      {/* 表が横に長くても、内訳は画面の幅に収める */}
+                      <div className="sticky left-4 grid w-[calc(min(100vw,72rem)-6.5rem)] gap-x-8 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
                         {Object.entries(detail.dims).map(([dim, labels]) => {
                           const row = rowOf(h.id, dim);
                           return (
                             <div key={dim}>
                               <p className="font-semibold text-slate-700">{dim}（{year}年）</p>
                               {row ? (
-                                <ul className="mt-0.5 space-y-0.5 text-slate-600">
-                                  {labels.map((l, i) => (
-                                    <li key={l} className="flex justify-between gap-3">
-                                      <span>{l}</span>
-                                      <span className="tabular-nums">{formatReg(toRegCount(row[i]))}（{formatShare(regShare(row, [i]))}）</span>
-                                    </li>
-                                  ))}
-                                </ul>
+                                <ShareBars rows={labels.map((l, i) => ({ label: l, count: formatReg(toRegCount(row[i])), pct: regShare(row, [i])?.pct ?? null, share: formatShare(regShare(row, [i])) }))} />
                               ) : <p className="text-slate-400">公表なし</p>}
                             </div>
                           );
