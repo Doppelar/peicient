@@ -149,27 +149,3 @@ export const formatShare = (s: ReturnType<typeof regShare>) => (s ? `${s.approx 
 
 /** 割合（%）を5段階の色の番号に（0〜19%→0 … 80%以上→4） */
 export const shareStep = (pct: number) => Math.max(0, Math.min(4, Math.floor(pct / 20)));
-
-export type AgeGroup = "under70" | "over70" | "over80";
-
-/**
- * 院内がん登録の年齢（0～14・15～39・40～64・65～74・75～84・85歳以上）から、70歳未満・70歳以上・80歳以上の割合を出す。
- * 公表の区切りが70歳・80歳と合わないので、65～74歳は「70～74歳」、75～84歳は「80～84歳」の分を、
- * 同じ都道府県の推計患者数の5歳階級（byAge：0-4歳…85歳以上の18区分）の比で割り振る。推計なので常に「約」
- */
-export function regAgeShare(row: RegDetailCount[] | undefined, labels: readonly string[], byAge: readonly number[], group: AgeGroup): { pct: number; approx: boolean } | null {
-  if (!row) return null;
-  const v = (prefix: string) => {
-    const i = labels.findIndex((l) => l.startsWith(prefix));
-    return i < 0 ? 0 : regValue(toRegCount(row[i]));
-  };
-  const total = row.reduce<number>((s, c) => s + regValue(toRegCount(c)), 0);
-  if (total === 0) return null;
-  const ratio = (a: number, b: number) => (a + b > 0 ? b / (a + b) : 0.5);
-  const w70 = ratio(byAge[13] ?? 0, byAge[14] ?? 0); // 65～74歳のうち70～74歳
-  const w80 = ratio(byAge[15] ?? 0, byAge[16] ?? 0); // 75～84歳のうち80～84歳
-  const over80 = v("75") * w80 + v("85");
-  const over70 = v("65") * w70 + v("75") + v("85");
-  const part = group === "over80" ? over80 : group === "over70" ? over70 : total - over70;
-  return { pct: Math.round((part / total) * 100), approx: true };
-}
