@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, forYear, formatDpc, formatReg, hasNoMuni, rankHospitals, rankPoints, regTrendOf, regValue, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
+import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -93,5 +93,16 @@ describe("院内がん登録の件数", () => {
   it("所在地がわからない病院は市区町村コードの末尾が000", () => {
     expect(hasNoMuni({ muni: "10000" })).toBe(true);
     expect(hasNoMuni({ muni: "10201" })).toBe(false);
+  });
+});
+
+describe("院内がん登録の内訳の割合", () => {
+  it("選んだ列の割合を出し、幅のある件数があれば「約」を付ける", () => {
+    expect(formatShare(regShare([15, 5], [0]))).toBe("75%");
+    expect(formatShare(regShare([[1, 3], 8], [1]))).toBe("約80%");
+    expect(formatShare(regShare([10, [1, 3], 0], [0, 2]))).toBe("約83%");
+    expect(formatShare(regShare([[1, 3], 0], [1]))).toBe("0%");
+    expect(formatShare(regShare([0, 0], [0]))).toBe("—");
+    expect(formatShare(regShare(undefined, [0]))).toBe("—");
   });
 });

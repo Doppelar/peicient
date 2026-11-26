@@ -116,3 +116,31 @@ export function regTrendOf(h: HospitalData, reg: string, years: readonly number[
 
 /** 所在市区町村がわからない（DPC の施設一覧で見つからなかった）病院か。 */
 export const hasNoMuni = (h: { muni: string }) => h.muni.endsWith("000");
+
+/** 院内がん登録の内訳。件数は数字か [下限, 上限]（幅で公表されたもの） */
+export type RegDetailCount = number | RegCount;
+export type RegDetail = {
+  /** 内訳の種類（性別・年齢など）ごとの列名 */
+  dims: Record<string, string[]>;
+  /** hospitals[病院id][部位][内訳][診断年] = 列ごとの件数 */
+  hospitals: Record<string, Record<string, Record<string, Record<string, RegDetailCount[]>>>>;
+  /** flows[部位][診断年] = [住んでいる都道府県, 受診した都道府県, 件数][]（都道府県をまたぐものだけ） */
+  flows?: Record<string, Record<string, Array<[number, number, RegDetailCount]>>>;
+};
+
+export const toRegCount = (c: RegDetailCount): RegCount => (typeof c === "number" ? [c, c] : c);
+
+/**
+ * 内訳のうち選んだ列が全体に占める割合（%、整数）。幅のある件数は真ん中の値で計算し、
+ * 幅のある件数が1つでもあれば「約」を付ける（0件ちょうどは付けない）。行がない・全体が0のときは null
+ */
+export function regShare(row: RegDetailCount[] | undefined, pick: readonly number[]): { pct: number; approx: boolean } | null {
+  if (!row) return null;
+  const counts = row.map(toRegCount);
+  const total = counts.reduce((s, c) => s + regValue(c), 0);
+  if (total === 0) return null;
+  const part = pick.reduce((s, i) => s + regValue(counts[i]), 0);
+  return { pct: Math.round((part / total) * 100), approx: part > 0 && counts.some((c) => c[0] !== c[1]) };
+}
+
+export const formatShare = (s: ReturnType<typeof regShare>) => (s ? `${s.approx ? "約" : ""}${s.pct}%` : "—");

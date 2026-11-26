@@ -269,6 +269,58 @@ for (const { f, m } of regFiles) {
   }
 }
 
+// ---- 院内がん登録：病院ごとの内訳（性別・年齢・住所など） ----
+// 部位別登録数の CSV を、内訳の種類ごとのフォルダ（「性別」「住所」など）に入れて置く。
+// 総数が10件未満の病院は内訳が「-」で伏せられているので持たない。住所は「県内・県外・不明」にまとめる
+const regDims = {}; // regDims[内訳] = 列名
+const regDetail = {}; // regDetail[病院id][部位][内訳][年] = [下限, 上限][]
+const regFlows = {}; // regFlows[部位][年] = [住んでいる都道府県, 受診した都道府県, 件数][]（都道府県をまたぐものだけ）
+const sumCounts = (cs) => cs.reduce((a, c) => [a[0] + c[0], a[1] + c[1]], [0, 0]);
+for (const dir of readdirSync(src, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+  const dim = dir.name;
+  for (const f of readdirSync(join(src, dim))) {
+    const m = f.match(/^院内がん登録データ_(\d{4})-\d{4}_(.+?)\.csv$/);
+    if (!m) continue;
+    const [header, ...table] = readSjisCsv(join(dim, f));
+    if (m[2].endsWith("（都道府県全体）")) {
+      // 住所の都道府県全体の表：行が受診した都道府県、列が住んでいる都道府県
+      if (dim !== "住所") continue;
+      const site = m[2].replace("（都道府県全体）", "");
+      const flows = ((regFlows[site] ??= {})[m[1]] = []);
+      for (const [toName, , , ...values] of table) {
+        const to = prefCodeByShort.get(toName);
+        if (!to) continue;
+        header.slice(3).forEach((fromName, i) => {
+          const from = prefCodeByShort.get(fromName);
+          const n = parseRegCount(values[i]);
+          if (from && from !== to && n && n[1] > 0) flows.push([Number(from), Number(to), n[0] === n[1] ? n[0] : n]);
+        });
+      }
+      continue;
+    }
+    const cols = header.slice(5);
+    regDims[dim] = dim === "住所" ? ["県内", "県外", "不明"] : cols;
+    for (const [prefName, name, , , total, ...values] of table) {
+      const code = prefCodeByShort.get(prefName);
+      const n = parseRegCount(total);
+      if (!code || !n || n[1] < 10) continue;
+      const counts = values.map(parseRegCount);
+      if (counts.some((c) => !c)) continue;
+      const h = hospitalByName.get(resolveFacilityKey(code, name));
+      if (!h) continue;
+      const row = dim === "住所"
+        ? [sumCounts(counts.filter((_, i) => cols[i] === prefName)),
+           sumCounts(counts.filter((_, i) => cols[i] !== prefName && cols[i] !== "不明")),
+           sumCounts(counts.filter((_, i) => cols[i] === "不明"))]
+        : counts;
+      // 幅のない件数は数字だけにして小さくする
+      ((((regDetail[h.id] ??= {})[m[2]] ??= {})[dim] ??= {})[m[1]] = row.map((c) => (c[0] === c[1] ? c[0] : c)));
+    }
+  }
+}
+writeFileSync(join(out, "reg-detail.json"), JSON.stringify({ dims: regDims, hospitals: regDetail, flows: regFlows }));
+console.log(`院内がん登録の内訳：${Object.keys(regDims).join("・") || "なし"}、病院 ${Object.keys(regDetail).length}`);
+
 const prefs = [...prefNames].filter(([code]) => code !== 0).map(([code, name]) => ({ code, name }));
 const meta = {
   incidenceYears: YEARS,

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Search } from "lucide-react";
 import {
   addPopulations,
   estimate,
@@ -10,10 +10,11 @@ import {
   type Survival,
 } from "./lib/estimate";
 import {
-  fiscalYearLabel, forYear, formatDpc, formatReg, hasNoMuni, rankHospitals, rankPoints, regTrendOf, shortHospitalName, trendOf,
-  type CountSource, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint,
+  fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
+  type CountSource, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint, type RegDetail,
 } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
+import { FlowMap } from "./flow-map";
 
 type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean; reg: string | null };
 type Meta = {
@@ -87,6 +88,7 @@ function Estimator({ data }: { data: Data }) {
   const [perCapita, setPerCapita] = useState(false);
   const [tab, setTab] = useState<Tab>("map");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const detail = useRegDetail();
 
   const site = meta.sites.find((s) => s.id === siteId) ?? meta.sites[0];
   const prefCode = meta.prefs.find((p) => p.name === pref)?.code ?? 0;
@@ -234,12 +236,20 @@ function Estimator({ data }: { data: Data }) {
         </div>
       )}
 
+      {tab === "map" && site.reg && detail?.flows?.[site.reg]?.[source.kind === "reg" ? source.year : meta.regYears[0]] && (
+        <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <h2 className="px-1 font-semibold">都道府県をまたぐ患者の移動</h2>
+          <p className="mb-1 px-1 text-xs text-slate-500">院内がん登録の「住所」の集計から、{pref}の参加病院に他県から来た人と、{pref}に住んでいて他県の参加病院で登録された人を矢印で示します（{source.kind === "reg" ? source.year : meta.regYears[0]}年診断）。参加病院だけの数で、3件以下は「1〜3」のような幅です。</p>
+          <FlowMap prefCode={prefCode} flows={detail.flows[site.reg][source.kind === "reg" ? source.year : meta.regYears[0]]} year={source.kind === "reg" ? source.year : meta.regYears[0]} site={site.reg} />
+        </section>
+      )}
+
       {tab === "areas" && (
         <AreaTable rows={inPref} wardCodes={wardCodes} estimates={estimates} selected={selected} onToggle={toggle} />
       )}
 
       {tab === "hospitals" && source.kind === "reg" && (
-        <RegistryTable points={points} reg={source.reg} year={source.year} years={meta.regYears} dpc={site.dpc} dpcLabel={dpcLabel} dpcYear={meta.dpcYears[0]} muniName={muniName} estimates={estimates} />
+        <RegistryTable points={points} reg={source.reg} year={source.year} years={meta.regYears} dpc={site.dpc} dpcLabel={dpcLabel} dpcYear={meta.dpcYears[0]} muniName={muniName} estimates={estimates} detail={detail} />
       )}
 
       {tab === "hospitals" && source.kind === "dpc" && (
@@ -376,43 +386,107 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
   );
 }
 
-function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniName, estimates }: {
+/** 院内がん登録の内訳（10件以上の病院だけ）。病院の表を開いたときに読み込む */
+function useRegDetail() {
+  const [detail, setDetail] = useState<RegDetail | null>(null);
+  useEffect(() => {
+    fetch("/data/reg-detail.json").then((r) => (r.ok ? r.json() : null)).then(setDetail).catch(() => setDetail(null));
+  }, []);
+  return detail;
+}
+
+/** 表に出す内訳の割合：[見出し, 内訳, 列名] */
+const SHARE_COLUMNS: Array<[string, string, string[]]> = [
+  ["男性", "性別", ["男性"]],
+  ["75歳以上", "年齢", ["75～84歳", "85歳以上"]],
+  ["県外から", "住所", ["県外"]],
+  ["紹介で来院", "来院経路", ["他施設紹介"]],
+  ["他院で診断", "症例区分", ["他施設診断自施設治療開始", "他施設診断自施設治療継続"]],
+];
+
+function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniName, estimates, detail }: {
   points: HospitalPoint[]; reg: string; year: number; years: number[]; dpc: string; dpcLabel: string; dpcYear: number;
-  muniName: Map<string, string>; estimates: Map<string, ReturnType<typeof estimate>>;
+  muniName: Map<string, string>; estimates: Map<string, ReturnType<typeof estimate>>; detail: RegDetail | null;
 }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const rowOf = (id: string, dim: string) => detail?.hospitals[id]?.[reg]?.[dim]?.[year];
+  const shareOf = (id: string, dim: string, labels: string[]) =>
+    formatShare(regShare(rowOf(id, dim), labels.map((l) => detail?.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0)));
+  const hasDetail = Boolean(detail && points.some(({ h }) => detail.hospitals[h.id]?.[reg]));
+  const columns = hasDetail ? SHARE_COLUMNS : [];
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <p className="px-4 py-2 text-xs text-slate-500">
         国立がん研究センター 院内がん登録の部位別登録数（{reg}、{year}年に診断された患者さん）。がん診療連携拠点病院などの参加病院だけで、その病院で初めて診療した患者さんを1人1回数えます。3件以下は「1〜3」のように幅で公表されています。「推移」は診断年ごと、「DPC」は同じ病気の{fiscalYearLabel(dpcYear)}の退院件数（のべ件数）です。
+        {hasDetail && " 男性・75歳以上などの割合は10件以上の病院だけ公表されている内訳から計算したもので、幅のある件数を含むときは「約」を付けています。病院名を押すと内訳をすべて見られます。"}
       </p>
       <table className="w-full text-sm">
-        <thead className="bg-slate-50 text-left text-xs text-slate-500">
+        <thead className="whitespace-nowrap bg-slate-50 text-left text-xs text-slate-500">
           <tr>
             <th className="px-3 py-2">病院</th>
             <th className="px-3 py-2">所在地</th>
             <th className="px-3 py-2">がん拠点</th>
             <th className="px-3 py-2 text-right text-slate-900">新規登録（{year}年）</th>
+            {columns.map(([label]) => <th key={label} className="whitespace-nowrap px-3 py-2 text-right">{label}</th>)}
             <th className="px-3 py-2">推移（{years.at(-1)}〜{years[0]}年）</th>
             <th className="px-3 py-2 text-right">DPC {dpcLabel}</th>
             <th className="px-3 py-2 text-right">所在地の推計患者数</th>
           </tr>
         </thead>
         <tbody>
-          {points.map(({ h, label }) => (
-            <tr key={h.id} className="border-t border-slate-100 hover:bg-slate-50">
-              <td className="px-3 py-1.5 font-medium" title={h.name}>{shortHospitalName(h.name)}</td>
-              <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{hasNoMuni(h) ? "—" : muniName.get(h.muni) ?? h.muni}</td>
-              <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
-              <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{label}</td>
-              <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
-                {regTrendOf(h, reg, years).map((t) => `${String(t.year).slice(2)}:${formatReg(t.count)}`).join(" → ")}
-              </td>
-              <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatDpc(h.counts[dpcYear]?.[dpc])}</td>
-              <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">
-                {estimates.get(h.muni) ? `${formatCount(estimates.get(h.muni)!.annual.total)}人／年` : "—"}
-              </td>
-            </tr>
-          ))}
+          {points.map(({ h, label }) => {
+            const expandable = Boolean(detail?.hospitals[h.id]?.[reg]);
+            const isOpen = open === h.id && expandable;
+            return (
+              <Fragment key={h.id}>
+                <tr className={`border-t border-slate-100 hover:bg-slate-50 ${expandable ? "cursor-pointer" : ""}`} onClick={() => expandable && setOpen(isOpen ? null : h.id)}>
+                  <td className="min-w-48 px-3 py-1.5 font-medium" title={h.name}>
+                    {shortHospitalName(h.name)}
+                    {expandable && <ChevronDown className={`ml-1 inline h-3.5 w-3.5 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden />}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{hasNoMuni(h) ? "—" : muniName.get(h.muni) ?? h.muni}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
+                  <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{label}</td>
+                  {columns.map(([label, dim, labels]) => (
+                    <td key={label} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600">{shareOf(h.id, dim, labels)}</td>
+                  ))}
+                  <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
+                    {regTrendOf(h, reg, years).map((t) => `${String(t.year).slice(2)}:${formatReg(t.count)}`).join(" → ")}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatDpc(h.counts[dpcYear]?.[dpc])}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600">
+                    {estimates.get(h.muni) ? `${formatCount(estimates.get(h.muni)!.annual.total)}人／年` : "—"}
+                  </td>
+                </tr>
+                {isOpen && detail && (
+                  <tr className="bg-slate-50">
+                    <td colSpan={7 + columns.length} className="px-4 py-3">
+                      <div className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                        {Object.entries(detail.dims).map(([dim, labels]) => {
+                          const row = rowOf(h.id, dim);
+                          return (
+                            <div key={dim}>
+                              <p className="font-semibold text-slate-700">{dim}（{year}年）</p>
+                              {row ? (
+                                <ul className="mt-0.5 space-y-0.5 text-slate-600">
+                                  {labels.map((l, i) => (
+                                    <li key={l} className="flex justify-between gap-3">
+                                      <span>{l}</span>
+                                      <span className="tabular-nums">{formatReg(toRegCount(row[i]))}（{formatShare(regShare(row, [i]))}）</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : <p className="text-slate-400">公表なし</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
       {points.length === 0 && <p className="px-4 py-6 text-sm text-slate-500">この病気の登録がある病院はありません。</p>}
