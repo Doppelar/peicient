@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shareStep, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
+import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regAgeShare, regTrendOf, regValue, shareStep, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -110,5 +110,27 @@ describe("院内がん登録の内訳の割合", () => {
 describe("割合の色の段階", () => {
   it("20%ごとに分け、100%は最後の段階", () => {
     expect([0, 19, 20, 59, 80, 100].map(shareStep)).toEqual([0, 0, 1, 2, 4, 4]);
+  });
+});
+
+describe("病院の年齢を70歳・80歳で分ける", () => {
+  const labels = ["0～14歳", "15～39歳", "40～64歳", "65～74歳", "75～84歳", "85歳以上"];
+  // 65-69と70-74、75-79と80-84がそれぞれ同じ人数なら、区切りの半分ずつを割り振る
+  const byAge = Array.from({ length: 18 }, () => 1);
+  const row = [0, 0, 20, 20, 40, 20]; // 合計100
+
+  it("70歳未満＋70歳以上＝100%、80歳以上は70歳以上に含まれる", () => {
+    expect(regAgeShare(row, labels, byAge, "under70")).toEqual({ pct: 30, approx: true }); // 20 + 20/2
+    expect(regAgeShare(row, labels, byAge, "over70")).toEqual({ pct: 70, approx: true }); // 10 + 40 + 20
+    expect(regAgeShare(row, labels, byAge, "over80")).toEqual({ pct: 40, approx: true }); // 20 + 20
+  });
+
+  it("推計の年齢の比で割り振る（70～74歳が65～69歳の3倍なら65～74歳の3/4）", () => {
+    const skew = byAge.map((x, i) => (i === 14 ? 3 : x));
+    expect(regAgeShare(row, labels, skew, "over70")?.pct).toBe(75); // 15 + 40 + 20
+  });
+
+  it("内訳がなければ null", () => {
+    expect(regAgeShare(undefined, labels, byAge, "over70")).toBeNull();
   });
 });

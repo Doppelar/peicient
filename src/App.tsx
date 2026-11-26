@@ -11,8 +11,8 @@ import {
   type Survival,
 } from "./lib/estimate";
 import {
-  fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
-  type CountSource, type DpcCount, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint, type RegCount, type RegDetail,
+  fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regAgeShare, regValue, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
+  type CountSource, type DpcCount, type Hospital, type HospitalByYear, type HospitalData, type AgeGroup, type HospitalPoint, type RegCount, type RegDetail, type RegDetailCount,
 } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
 import { FlowMap } from "./flow-map";
@@ -91,7 +91,7 @@ function Estimator({ data }: { data: Data }) {
   const [tab, setTab] = useState<Tab>("map");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const detail = useRegDetail();
-  /** 病院の丸の色に使う内訳（SHARE_COLUMNS の見出し）。null なら一色 */
+  /** 病院の丸の色に使う内訳（hospitalMetrics の見出し）。null なら一色 */
   const [metric, setMetric] = useState<string | null>(null);
   /** 患者の流れを見る病院 */
   const [picked, setPicked] = useState<string | null>(null);
@@ -134,13 +134,12 @@ function Estimator({ data }: { data: Data }) {
   const muniName = useMemo(() => new Map(data.municipalities.map((m) => [m.code, m.name])), [data.municipalities]);
 
   const flowYear = source.kind === "reg" ? source.year : meta.regYears[0];
+  const metrics = useMemo(() => (detail ? hospitalMetrics(detail.dims, prefTotal.byAge) : []), [detail, prefTotal]);
   const colorBy = useMemo(() => {
-    const col = SHARE_COLUMNS.find(([label]) => label === metric);
-    if (!col || !detail || source.kind !== "reg") return null;
-    const [label, dim, labels] = col;
-    const idx = labels.map((l) => detail.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0);
-    return { label: `${label}の割合`, pctOf: (id: string) => regShare(detail.hospitals[id]?.[source.reg]?.[dim]?.[source.year], idx)?.pct ?? null };
-  }, [metric, detail, source]);
+    const mt = metrics.find((x) => x.label === metric);
+    if (!mt || !detail || source.kind !== "reg") return null;
+    return { label: `${mt.label}の割合`, pctOf: (id: string) => mt.of((dim) => detail.hospitals[id]?.[source.reg]?.[dim]?.[source.year])?.pct ?? null };
+  }, [metric, metrics, detail, source]);
   // 流れを見られる病院：住所の内訳が公表されている（10件以上の）病院
   const flowHospitals = site.reg ? points.filter(({ h }) => detail?.hospitals[h.id]?.[site.reg!]?.["住所"]?.[flowYear]) : [];
   const pickedPoint = flowHospitals.find(({ h }) => h.id === picked);
@@ -243,7 +242,7 @@ function Estimator({ data }: { data: Data }) {
             {source.kind === "reg" && detail && (
               <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" role="group" aria-label="病院の丸の色">
                 <span className="mr-1 text-slate-500">病院の丸の色</span>
-                {[null, ...SHARE_COLUMNS.map(([label]) => label)].map((k) => (
+                {[null, ...metrics.map((x) => x.label)].map((k) => (
                   <button key={k ?? "none"} type="button" aria-pressed={metric === k} onClick={() => setMetric(k)}
                     className={`rounded-full px-2.5 py-1 ${metric === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>
                     {k ?? "一色"}
@@ -313,7 +312,7 @@ function Estimator({ data }: { data: Data }) {
       )}
 
       {tab === "hospitals" && source.kind === "reg" && (
-        <RegistryTable points={points} reg={source.reg} year={source.year} years={meta.regYears} dpc={site.dpc} dpcLabel={dpcLabel} dpcYear={meta.dpcYears[0]} muniName={muniName} estimates={estimates} detail={detail} />
+        <RegistryTable points={points} reg={source.reg} year={source.year} years={meta.regYears} dpc={site.dpc} dpcLabel={dpcLabel} dpcYear={meta.dpcYears[0]} muniName={muniName} estimates={estimates} detail={detail} metrics={metrics} />
       )}
 
       {tab === "hospitals" && source.kind === "dpc" && (
@@ -518,30 +517,40 @@ function useRegDetail() {
   return detail;
 }
 
-/** 表に出す内訳の割合：[見出し, 内訳, 列名] */
-const SHARE_COLUMNS: Array<[string, string, string[]]> = [
-  ["男性", "性別", ["男性"]],
-  ["75歳以上", "年齢", ["75～84歳", "85歳以上"]],
-  ["県外から", "住所", ["県外"]],
-  ["紹介で来院", "来院経路", ["他施設紹介"]],
-  ["他院で診断", "症例区分", ["他施設診断自施設治療開始", "他施設診断自施設治療継続"]],
-];
+/** 病院の内訳から出す割合（表の列・地図の丸の色）。rowOf(内訳) でその病院・診断年の行を渡す */
+type HospitalMetric = { label: string; of: (rowOf: (dim: string) => RegDetailCount[] | undefined) => ReturnType<typeof regShare> };
 
-function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniName, estimates, detail }: {
+/** byAge は同じ都道府県の推計患者数の5歳階級（年齢を70歳・80歳で分けるのに使う） */
+function hospitalMetrics(dims: Record<string, string[]>, byAge: number[]): HospitalMetric[] {
+  const share = (label: string, dim: string, cols: string[]): HospitalMetric => {
+    const idx = cols.map((c) => dims[dim]?.indexOf(c) ?? -1).filter((i) => i >= 0);
+    return { label, of: (rowOf) => regShare(rowOf(dim), idx) };
+  };
+  const age = (label: string, group: AgeGroup): HospitalMetric => ({ label, of: (rowOf) => regAgeShare(rowOf("年齢"), dims["年齢"] ?? [], byAge, group) });
+  return [
+    share("男性", "性別", ["男性"]),
+    age("70歳未満", "under70"),
+    age("70歳以上", "over70"),
+    age("80歳以上", "over80"),
+    share("県外から", "住所", ["県外"]),
+    share("紹介で来院", "来院経路", ["他施設紹介"]),
+    share("他院で診断", "症例区分", ["他施設診断自施設治療開始", "他施設診断自施設治療継続"]),
+  ];
+}
+
+function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniName, estimates, detail, metrics }: {
   points: HospitalPoint[]; reg: string; year: number; years: number[]; dpc: string; dpcLabel: string; dpcYear: number;
-  muniName: Map<string, string>; estimates: Map<string, ReturnType<typeof estimate>>; detail: RegDetail | null;
+  muniName: Map<string, string>; estimates: Map<string, ReturnType<typeof estimate>>; detail: RegDetail | null; metrics: HospitalMetric[];
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const rowOf = (id: string, dim: string) => detail?.hospitals[id]?.[reg]?.[dim]?.[year];
-  const shareOf = (id: string, dim: string, labels: string[]) =>
-    regShare(rowOf(id, dim), labels.map((l) => detail?.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0));
   const hasDetail = Boolean(detail && points.some(({ h }) => detail.hospitals[h.id]?.[reg]));
-  const columns = hasDetail ? SHARE_COLUMNS : [];
+  const columns = hasDetail ? metrics : [];
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <p className="px-4 py-2 text-xs text-slate-500">
         国立がん研究センター 院内がん登録の部位別登録数（{reg}、{year}年に診断された患者さん）。がん診療連携拠点病院などの参加病院だけで、その病院で初めて診療した患者さんを1人1回数えます。3件以下は「1〜3」のように幅で公表されています。「推移」は診断年ごと、「DPC」は同じ病気の{fiscalYearLabel(dpcYear)}の退院件数（のべ件数）です。
-        {hasDetail && " 男性・75歳以上などの割合は10件以上の病院だけ公表されている内訳から計算したもので、幅のある件数を含むときは「約」を付けています。病院名を押すと内訳をすべて見られます。"}
+        {hasDetail && " 男性・70歳以上などの割合は10件以上の病院だけ公表されている内訳から計算したもので、幅のある件数を含むときは「約」を付けています。年齢は「65〜74歳」「75〜84歳」の区切りで公表されているため、70歳・80歳で分けた割合は、その区切りの中を県の年齢別の推計患者数の比で割り振った推計です（いつも「約」）。病院名を押すと内訳をすべて見られます。"}
       </p>
       <table className="w-full text-sm">
         <thead className="whitespace-nowrap bg-slate-50 text-left text-xs text-slate-500">
@@ -550,7 +559,7 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
             <th className="px-3 py-2">所在地</th>
             <th className="px-3 py-2">がん拠点</th>
             <th className="px-3 py-2 text-right text-slate-900">新規登録（{year}年）</th>
-            {columns.map(([label]) => <th key={label} className="whitespace-nowrap px-3 py-2 text-right">{label}</th>)}
+            {columns.map(({ label }) => <th key={label} className="whitespace-nowrap px-3 py-2 text-right">{label}</th>)}
             <th className="px-3 py-2">推移（{years.at(-1)}〜{years[0]}年）</th>
             <th className="px-3 py-2 text-right">DPC {dpcLabel}</th>
             <th className="px-3 py-2 text-right">所在地の推計患者数</th>
@@ -570,9 +579,10 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
                   <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{hasNoMuni(h) ? "—" : muniName.get(h.muni) ?? h.muni}</td>
                   <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
                   <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{label}</td>
-                  {columns.map(([label, dim, labels]) => (
-                    <td key={label} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600"><ShareCell text={formatShare(shareOf(h.id, dim, labels))} pct={shareOf(h.id, dim, labels)?.pct ?? null} /></td>
-                  ))}
+                  {columns.map(({ label, of }) => {
+                    const sh = of((dim) => rowOf(h.id, dim));
+                    return <td key={label} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-slate-600"><ShareCell text={formatShare(sh)} pct={sh?.pct ?? null} /></td>;
+                  })}
                   <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
                     <Sparkline years={[...years].sort((a, b) => a - b)} values={regTrendOf(h, reg, years).map((t) => regPoint(t.count))} unit="人" />
                   </td>
@@ -592,7 +602,19 @@ function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniN
                             <div key={dim}>
                               <p className="font-semibold text-slate-700">{dim}（{year}年）</p>
                               {row ? (
-                                <ShareBars rows={labels.map((l, i) => ({ label: l, count: formatReg(toRegCount(row[i])), pct: regShare(row, [i])?.pct ?? null, share: formatShare(regShare(row, [i])) }))} />
+                                <>
+                                  <ShareBars rows={labels.map((l, i) => ({ label: l, count: formatReg(toRegCount(row[i])), pct: regShare(row, [i])?.pct ?? null, share: formatShare(regShare(row, [i])) }))} />
+                                  {dim === "年齢" && (
+                                    <>
+                                      <p className="mt-2 text-slate-500">70歳・80歳で分けると（推計）</p>
+                                      <ShareBars rows={metrics.filter((x) => x.label.startsWith("70") || x.label.startsWith("80")).map((x) => {
+                                        const sh = x.of(() => row);
+                                        const total = row.reduce<number>((t, c) => t + regValue(toRegCount(c)), 0);
+                                        return { label: x.label, count: sh ? `約${Math.round((sh.pct / 100) * total)}` : "—", pct: sh?.pct ?? null, share: formatShare(sh) };
+                                      })} />
+                                    </>
+                                  )}
+                                </>
                               ) : <p className="text-slate-400">公表なし</p>}
                             </div>
                           );
