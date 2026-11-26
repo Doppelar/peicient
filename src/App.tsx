@@ -11,7 +11,7 @@ import {
   type Survival,
 } from "./lib/estimate";
 import {
-  fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
+  dpcPeriod, fiscalYearLabel, forYear, formatDpc, formatReg, formatShare, hasNoMuni, rankHospitals, rankPoints, regShare, regTrendOf, shortHospitalName, toRegCount, trendOf,
   type CountSource, type DpcCount, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint, type RegCount, type RegDetail,
 } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
@@ -419,7 +419,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <p className="px-4 py-2 text-xs text-slate-500">
-        厚生労働省 DPC 退院患者調査（{fiscalYearLabel(dpcYear)}：{dpcYear}年4月〜{dpcYear + 1}年3月退院）の退院件数。「推移」は選んだ病気の年度ごとの件数です（令和4年度＝2022年度は病院別のデータが見つからないため入っていません）。のべ件数なので、同じ患者さんが何度も入院すると重ねて数えます。10件未満は公表されていないため「—」または「以上」で示します。
+        厚生労働省 DPC 退院患者調査（{fiscalYearLabel(dpcYear)}：{dpcPeriod(dpcYear)}に退院）の退院件数。「推移」は選んだ病気の年度ごとの件数です。のべ件数なので、同じ患者さんが何度も入院すると重ねて数えます。10件未満は公表されていないため「—」または「以上」で示します。
       </p>
       <table className="w-full text-sm">
         <thead className="bg-slate-50 text-left text-xs text-slate-500">
@@ -492,7 +492,7 @@ function TrendSection({ pref, prefCode, source, meta, hospitals, points, dpcLabe
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h2 className="font-semibold">患者数の推移</h2>
       <p className="mb-3 text-xs text-slate-500">
-        {source.kind === "reg" ? `院内がん登録 ${source.reg}の新規登録数（診断年）。県全体は県内の参加病院の合計で、他県から来た人も含みます。縦の薄い線は「1〜3」のような幅のある件数です。` : `DPC ${dpcLabel}の退院件数（年度、のべ件数）。県全体は公表されている病院の件数（10件以上の区分）の合計です。2022年度は病院別のデータがありません。`}
+        {source.kind === "reg" ? `院内がん登録 ${source.reg}の新規登録数（診断年）。県全体は県内の参加病院の合計で、他県から来た人も含みます。縦の薄い線は「1〜3」のような幅のある件数です。` : `DPC ${dpcLabel}の退院件数（年度、のべ件数）。県全体は公表されている病院の件数（10件以上の区分）の合計です。`}
         グラフにマウスを重ねると、その年の値が出ます。
       </p>
       <div className="grid gap-6 lg:grid-cols-2">
@@ -637,7 +637,7 @@ function Notes({ meta }: { meta: Meta }) {
         <li>地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
       </ul>
       <p>
-        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）・「院内がん登録 部位別登録数」／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）・「医療情報ネット」オープンデータ（病院の所在地）／国土地理院 住所検索／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
+        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）・「院内がん登録 部位別登録数」／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2〜6年度）・「医療情報ネット」オープンデータ（病院の所在地）／国土地理院 住所検索／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
       </p>
     </section>
   );

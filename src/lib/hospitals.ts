@@ -61,6 +61,9 @@ export type HospitalByYear = Omit<Hospital, "counts"> & { counts: Record<string,
 /** 年度の表示名（DPC は4月〜翌3月の退院）。 */
 export const fiscalYearLabel = (year: number) => `${year}年度`;
 
+/** DPC の調査年度の退院期間（令和6年度＝2024年度から6月〜翌5月。それまでは4月〜翌3月） */
+export const dpcPeriod = (year: number) => (year >= 2024 ? `${year}年6月〜${year + 1}年5月` : `${year}年4月〜${year + 1}年3月`);
+
 /** 1つの年度の件数だけを持つ病院に変える（その年度の件数がない病院は除く）。 */
 export function forYear(hospitals: readonly HospitalByYear[], year: number): Hospital[] {
   return hospitals

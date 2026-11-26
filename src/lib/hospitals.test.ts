@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shareStep, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
+import { dpcPeriod, dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shareStep, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -110,5 +110,12 @@ describe("院内がん登録の内訳の割合", () => {
 describe("割合の色の段階", () => {
   it("20%ごとに分け、100%は最後の段階", () => {
     expect([0, 19, 20, 59, 80, 100].map(shareStep)).toEqual([0, 0, 1, 2, 4, 4]);
+  });
+});
+
+describe("DPC の調査年度の期間", () => {
+  it("2024年度から6月〜翌5月", () => {
+    expect(dpcPeriod(2023)).toBe("2023年4月〜2024年3月");
+    expect(dpcPeriod(2024)).toBe("2024年6月〜2025年5月");
   });
 });
