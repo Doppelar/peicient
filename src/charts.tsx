@@ -172,3 +172,90 @@ export function ShareCell({ text, pct }: { text: string; pct: number | null }) {
     </span>
   );
 }
+
+/** 年齢のまとまりの色（若い→高齢を薄い→濃い青で） */
+export const AGE_COLORS = { under70: "#9ec5f4", age70s: "#3987e5", over80: "#184f95" };
+
+/** 70歳未満・70〜79歳・80歳以上の割合の帯と人数 */
+export function AgeSplit({ g, format }: { g: { under70: number; age70s: number; over70: number; over80: number }; format: (n: number) => string }) {
+  const total = g.under70 + g.over70 || 1;
+  const pct = (n: number) => Math.round((n / total) * 100);
+  const parts: Array<[string, number, string]> = [["70歳未満", g.under70, AGE_COLORS.under70], ["70〜79歳", g.age70s, AGE_COLORS.age70s], ["80歳以上", g.over80, AGE_COLORS.over80]];
+  const item = (label: string, n: number, swatches: string[]) => (
+    <div>
+      <dt className="flex items-center gap-1 text-slate-500">
+        <span className="flex">{swatches.map((c) => <span key={c} className="inline-block h-2 w-2 rounded-sm" style={{ background: c }} />)}</span>
+        {label}
+      </dt>
+      <dd className="font-semibold tabular-nums text-slate-800">{format(n)}人 <span className="font-normal text-slate-500">{pct(n)}%</span></dd>
+    </div>
+  );
+  return (
+    <div>
+      <div className="flex h-3 gap-0.5 overflow-hidden rounded-sm" role="img" aria-label={parts.map(([l, n]) => `${l} ${format(n)}人`).join("、")}>
+        {parts.map(([l, n, c]) => n > 0 && <span key={l} style={{ width: `${(n / total) * 100}%`, background: c }} title={`${l}：${format(n)}人（${pct(n)}%）`} />)}
+      </div>
+      <dl className="mt-1.5 grid grid-cols-3 gap-2 text-xs">
+        {item("70歳未満", g.under70, [AGE_COLORS.under70])}
+        {item("70歳以上", g.over70, [AGE_COLORS.age70s, AGE_COLORS.over80])}
+        {item("うち80歳以上", g.over80, [AGE_COLORS.over80])}
+      </dl>
+    </div>
+  );
+}
+
+/** 上の角だけ丸い棒 */
+function roundedTop(x: number, y: number, w: number, h: number) {
+  if (h <= 0) return "";
+  const r = Math.min(4, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+
+/** 5歳階級ごとの人数の縦棒（70歳以上・80歳以上を濃い色で） */
+export function AgeHistogram({ byAge, labels, format }: { byAge: number[]; labels: string[]; format: (n: number) => string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const W = 640;
+  const H = 220;
+  const m = { l: 40, r: 8, t: 12, b: 34 };
+  const ticks = niceTicks(Math.max(...byAge, 0.1));
+  const top = ticks.at(-1)!;
+  const bw = (W - m.l - m.r) / byAge.length;
+  const y = (v: number) => H - m.b - (v / top) * (H - m.t - m.b);
+  const color = (i: number) => (i >= 16 ? AGE_COLORS.over80 : i >= 14 ? AGE_COLORS.age70s : AGE_COLORS.under70);
+  const mark = (i: number, label: string, dy: number) => (
+    <g>
+      <line x1={m.l + i * bw} x2={m.l + i * bw} y1={m.t + dy} y2={H - m.b + 4} stroke={MUTED} strokeDasharray="3 3" />
+      <text x={m.l + i * bw + 4} y={m.t + dy + 10} fontSize={11} fill={INK}>{label}</text>
+    </g>
+  );
+  return (
+    <div className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label="年齢別の推計患者数">
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={m.l} x2={W - m.r} y1={y(t)} y2={y(t)} stroke={t === 0 ? BASE : GRID} />
+            <text x={m.l - 6} y={y(t)} textAnchor="end" dominantBaseline="middle" fontSize={11} fill={MUTED}>{t}</text>
+          </g>
+        ))}
+        {byAge.map((v, i) => (
+          <g key={i} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)}>
+            <rect x={m.l + i * bw} y={m.t} width={bw} height={H - m.t - m.b} fill="transparent" />
+            <path d={roundedTop(m.l + i * bw + 1, y(v), bw - 2, H - m.b - y(v))} fill={color(i)} opacity={hover == null || hover === i ? 1 : 0.6} />
+            {i % 2 === 0 && <text x={m.l + i * bw + bw / 2} y={H - m.b + 14} textAnchor="middle" fontSize={10} fill={MUTED}>{i * 5}</text>}
+          </g>
+        ))}
+        <text x={m.l + 17.5 * bw} y={H - m.b + 14} textAnchor="middle" fontSize={10} fill={MUTED}>85+</text>
+        <text x={W - m.r} y={H - 4} textAnchor="end" fontSize={10} fill={MUTED}>歳</text>
+        {mark(14, "70歳", 0)}
+        {mark(16, "80歳", 16)}
+      </svg>
+      {hover != null && (
+        <div className="pointer-events-none absolute z-10 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs shadow-md"
+          style={{ left: `${((m.l + (hover + 0.5) * bw) / W) * 100}%`, top: 0, transform: hover > 11 ? "translateX(calc(-100% - 8px))" : "translateX(8px)" }}>
+          <p className="font-semibold text-slate-800">{labels[hover]}</p>
+          <p className="tabular-nums text-slate-600">{format(byAge[hover])}人／年</p>
+        </div>
+      )}
+    </div>
+  );
+}

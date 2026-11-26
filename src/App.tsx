@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import {
   addPopulations,
+  ageGroups,
   estimate,
   formatCount,
   isWard,
@@ -15,7 +16,7 @@ import {
 } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
 import { FlowMap } from "./flow-map";
-import { ShareBars, ShareCell, Sparkline, TrendChart, type Point, type Series } from "./charts";
+import { AgeHistogram, AgeSplit, ShareBars, ShareCell, Sparkline, TrendChart, type Point, type Series } from "./charts";
 
 type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean; reg: string | null };
 type Meta = {
@@ -238,6 +239,17 @@ function Estimator({ data }: { data: Data }) {
       )}
 
       {tab === "map" && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="font-semibold">年齢別の推計患者数（{chosenTotal ? `選んだ地域（${chosen.length}）` : `${pref}全体`}、年間新規）</h2>
+          <p className="mb-2 text-xs text-slate-500">{site.name}の罹患率を5歳ごとの人口に当てはめた推計です。濃い色が70歳以上、いちばん濃い色が80歳以上です。地図で市区町村を選ぶと、その地域の分になります。棒にマウスを重ねると人数が出ます。</p>
+          <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
+            <AgeHistogram byAge={(chosenTotal ?? prefTotal).byAge} labels={meta.ageBins} format={formatCount} />
+            <div className="self-center"><AgeSplit g={ageGroups((chosenTotal ?? prefTotal).byAge)} format={formatCount} /></div>
+          </div>
+        </section>
+      )}
+
+      {tab === "map" && (
         <TrendSection pref={pref} prefCode={prefCode} source={source} meta={meta} hospitals={data.hospitals} points={points} dpcLabel={dpcLabel} />
       )}
 
@@ -284,6 +296,10 @@ function Summary({ title, subtitle, e, hospitals, note, onClear }: {
         <div><dt className="text-xs text-slate-500">5年有病者（概算）</dt><dd className="text-lg font-semibold tabular-nums">{e.prevalence5 == null ? "—" : `${formatCount(e.prevalence5)}人`}</dd></div>
         <div><dt className="text-xs text-slate-500">病院（件数あり）</dt><dd className="text-lg font-semibold tabular-nums">{hospitals}</dd></div>
       </dl>
+      <div className="mt-3">
+        <p className="mb-1 text-xs text-slate-500">年間新規（推計）の年齢</p>
+        <AgeSplit g={ageGroups(e.byAge)} format={formatCount} />
+      </div>
       {note && <p className="mt-2 text-xs text-slate-600">{note}</p>}
     </section>
   );
@@ -319,6 +335,9 @@ function AreaTable({ rows, wardCodes, estimates, selected, onToggle }: {
             <th className="px-3 py-2 text-right">人口</th>
             <th className="px-3 py-2 text-right">年間新規（推計）</th>
             <th className="px-3 py-2 text-right">男 / 女</th>
+            <th className="whitespace-nowrap px-3 py-2 text-right">70歳未満</th>
+            <th className="whitespace-nowrap px-3 py-2 text-right">70歳以上</th>
+            <th className="whitespace-nowrap px-3 py-2 text-right">80歳以上</th>
             <th className="px-3 py-2 text-right">5年有病者（概算）</th>
           </tr>
         </thead>
@@ -332,6 +351,9 @@ function AreaTable({ rows, wardCodes, estimates, selected, onToggle }: {
                 <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{e.population.toLocaleString("ja-JP")}</td>
                 <td className="px-3 py-1.5 text-right font-medium tabular-nums">{formatCount(e.annual.total)}人</td>
                 <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatCount(e.annual.m)} / {formatCount(e.annual.f)}</td>
+                {[ageGroups(e.byAge)].flatMap((g) => [g.under70, g.over70, g.over80]).map((n, i) => (
+                  <td key={i} className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatCount(n)}</td>
+                ))}
                 <td className="px-3 py-1.5 text-right tabular-nums">{e.prevalence5 == null ? "—" : `${formatCount(e.prevalence5)}人`}</td>
               </tr>
             );

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addPopulations,
+  ageGroups,
   estimate,
   estimateAnnual,
   estimatePrevalence5,
@@ -71,5 +72,16 @@ describe("地域のまとめ", () => {
   it("10未満は小数1桁、10以上は整数で表示する", () => {
     expect(formatCount(3.14)).toBe("3.1");
     expect(formatCount(1234.6)).toBe("1,235");
+  });
+});
+
+describe("年齢のまとまり", () => {
+  it("70歳未満・70〜79歳・80歳以上に分け、70歳以上は80歳以上を含む", () => {
+    const byAge = Array.from({ length: 18 }, (_, i) => i); // 0-4歳=0 … 85歳以上=17
+    const g = ageGroups(byAge);
+    expect(g.under70).toBe(91); // 0+1+…+13
+    expect(g.age70s).toBe(14 + 15);
+    expect(g.over80).toBe(16 + 17);
+    expect(g.over70).toBe(14 + 15 + 16 + 17);
   });
 });

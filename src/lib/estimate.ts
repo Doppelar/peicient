@@ -77,3 +77,11 @@ export function formatCount(n: number): string {
   if (n >= 10) return Math.round(n).toLocaleString("ja-JP");
   return n.toFixed(1);
 }
+
+/** 年齢別（5歳階級・18区分）の人数を、70歳未満・70〜79歳・80歳以上にまとめる。 */
+export function ageGroups(byAge: readonly number[]) {
+  const under70 = sum(byAge.slice(0, 14));
+  const age70s = sum(byAge.slice(14, 16));
+  const over80 = sum(byAge.slice(16));
+  return { under70, age70s, over70: age70s + over80, over80 };
+}
