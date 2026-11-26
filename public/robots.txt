@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://peicient.vercel.app/sitemap.xml
