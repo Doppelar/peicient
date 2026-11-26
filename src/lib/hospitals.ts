@@ -25,7 +25,8 @@ export const dpcValue = (c: DpcCount | undefined) => c?.[0] ?? 0;
 
 /** 「独立行政法人国立病院機構　渋川医療センター」→「渋川医療センター」のように、法人名などを外して短くする。 */
 export function shortHospitalName(name: string): string {
-  const s = name.replace(/[\s　]+/g, " ").trim();
+  // 「医療法人　社団　日高会」のように法人名の中に空白があるものは先に詰める
+  const s = name.replace(/[\s　]+/g, " ").trim().replace(/^((?:社会)?医療法人) ?(社団|財団)? ?/, (_, a: string, b?: string) => `${a}${b ?? ""}`);
   const stripped = s
     // 「医療法人島門会本島総合病院」のような法人名は「〜会」までを外す
     .replace(/^(社会)?医療法人(社団|財団)?\S*?会\s?(?=\S)/, "")
@@ -69,3 +70,49 @@ export function forYear(hospitals: readonly HospitalByYear[], year: number): Hos
 export function trendOf(h: HospitalByYear, dpc: string, years: readonly number[]): Array<{ year: number; count: DpcCount | undefined }> {
   return [...years].sort((a, b) => a - b).map((year) => ({ year, count: h.counts[year]?.[dpc] }));
 }
+
+/** 院内がん登録の新規登録数。[下限, 上限]（3件以下は「1～3」のように幅で公表）。 */
+export type RegCount = [number, number];
+
+/** データの形：DPC の年度ごとの件数と、院内がん登録の部位・診断年ごとの件数を持つ病院。 */
+export type HospitalData = HospitalByYear & { reg?: Record<string, Record<string, RegCount>> };
+
+export function formatReg(c: RegCount | undefined): string {
+  if (!c) return "—";
+  if (c[0] === c[1]) return String(c[0]);
+  return `${c[0]}〜${c[1]}`;
+}
+
+/** 並べ替え・丸の大きさに使う値（幅があるときは真ん中）。 */
+export const regValue = (c: RegCount | undefined) => (c ? (c[0] + c[1]) / 2 : 0);
+
+/** 病院の件数の出どころ。 */
+export type CountSource = { kind: "dpc"; year: number; dpc: string } | { kind: "reg"; year: number; reg: string };
+
+/** 地図・一覧に出す病院と、その件数。 */
+export type HospitalPoint = { h: HospitalData; value: number; label: string };
+
+/** 都道府県で絞り、選んだ出どころの件数が多い順に並べる（件数が0の病院は除く）。 */
+export function rankPoints(hospitals: readonly HospitalData[], prefCode: number, source: CountSource): HospitalPoint[] {
+  const p = String(prefCode).padStart(2, "0");
+  return hospitals
+    .filter((h) => h.muni.startsWith(p))
+    .map((h) => {
+      if (source.kind === "dpc") {
+        const c = h.counts[source.year]?.[source.dpc];
+        return { h, value: dpcValue(c), label: formatDpc(c) };
+      }
+      const c = h.reg?.[source.reg]?.[source.year];
+      return { h, value: regValue(c), label: formatReg(c) };
+    })
+    .filter((x) => x.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+/** 院内がん登録の件数の推移（古い順）。 */
+export function regTrendOf(h: HospitalData, reg: string, years: readonly number[]): Array<{ year: number; count: RegCount | undefined }> {
+  return [...years].sort((a, b) => a - b).map((year) => ({ year, count: h.reg?.[reg]?.[year] }));
+}
+
+/** 所在市区町村がわからない（DPC の施設一覧で見つからなかった）病院か。 */
+export const hasNoMuni = (h: { muni: string }) => h.muni.endsWith("000");

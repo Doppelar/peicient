@@ -9,7 +9,7 @@
 //   - dpc_mdc13_<年度>.xlsx                     … 厚生労働省 DPC 退院患者調査「疾患別手術別集計_MDC13」（年度ごと、例 dpc_mdc13_2023.xlsx）
 //   - dpc_facilities_<年度>.xlsx                … 同「施設概要表」（同じ年度）
 //   - hbcr_facilities.xlsx                      … 国立がん研究センター 院内がん登録症例集計「集計対象施設一覧」（任意）
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import XLSX from "xlsx";
 import { shortHospitalName } from "../src/lib/hospitals.ts";
@@ -30,13 +30,13 @@ const SEXES = { 男: "m", 女: "f" };
  * base が都道府県別・年齢別の率を持つ部位。detail があるものは、全国の詳細部位の割合（性別）を掛けて推計する。
  */
 const SITES = [
-  { id: "mm", name: "多発性骨髄腫", icd: "C88-C90", base: 26, survival: "多発性骨髄腫", dpc: "130040" },
-  { id: "myeloid", name: "骨髄性白血病（AMLが中心）", icd: "C92", base: 27, detail: ["C92"], survival: "白血病", dpc: "130010",
+  { id: "mm", name: "多発性骨髄腫", icd: "C88-C90", base: 26, survival: "多発性骨髄腫", dpc: "130040", reg: "多発性骨髄腫" },
+  { id: "myeloid", name: "骨髄性白血病（AMLが中心）", icd: "C92", base: 27, detail: ["C92"], survival: "白血病", dpc: "130010", reg: "白血病",
     note: "全国がん登録では AML だけの集計がないため、骨髄性白血病（C92）で示します。CML なども含みます。" },
-  { id: "leukemia", name: "白血病（すべて）", icd: "C91-C95", base: 27, survival: "白血病", dpc: "130010" },
-  { id: "lymphoma", name: "悪性リンパ腫", icd: "C81-C85, C96", base: 25, survival: "悪性リンパ腫", dpc: "130030" },
-  { id: "dlbcl", name: "びまん性大細胞型などのびまん性リンパ腫（DLBCLが中心）", icd: "C83", base: 25, detail: ["C83"], survival: "悪性リンパ腫", dpc: "130030" },
-  { id: "fl", name: "ろ胞性リンパ腫", icd: "C82", base: 25, detail: ["C82"], survival: "悪性リンパ腫", dpc: "130030" },
+  { id: "leukemia", name: "白血病（すべて）", icd: "C91-C95", base: 27, survival: "白血病", dpc: "130010", reg: "白血病" },
+  { id: "lymphoma", name: "悪性リンパ腫", icd: "C81-C85, C96", base: 25, survival: "悪性リンパ腫", dpc: "130030", reg: "悪性リンパ腫" },
+  { id: "dlbcl", name: "びまん性大細胞型などのびまん性リンパ腫（DLBCLが中心）", icd: "C83", base: 25, detail: ["C83"], survival: "悪性リンパ腫", dpc: "130030", reg: "悪性リンパ腫" },
+  { id: "fl", name: "ろ胞性リンパ腫", icd: "C82", base: 25, detail: ["C82"], survival: "悪性リンパ腫", dpc: "130030", reg: "悪性リンパ腫" },
 ];
 /** 詳細部位の割合の分母（base の部位に含まれる ICD） */
 const DETAIL_PARENT = { 27: ["C91", "C92", "C93", "C94", "C95"], 25: ["C81", "C82", "C83", "C84", "C85", "C96"] };
@@ -130,7 +130,7 @@ const muniList = [...municipalities.values()].filter((m) => sumPop(m) > 0);
 
 /** 病院名を照合用にそろえる（法人名・空白・括弧を外す）。 */
 const normName = (s) =>
-  shortHospitalName(String(s)).normalize("NFKC").replace(/[\s・()（）]/g, "").replace(/^(JA)?[^\s]*?厚生連/, "").replace(/総合病院/g, "病院");
+  shortHospitalName(String(s)).normalize("NFKC").replace(/^(JCHO|NHO|KKR)(?=.)/, "").replace(/[\s・()（）]/g, "").replace(/^(JA)?[^\s]*?厚生連/, "").replace(/総合病院/g, "病院");
 
 // ---- DPC：病院ごとの血液疾患の退院件数（年度ごと） ----
 // dpc_mdc13_<年度>.xlsx と dpc_facilities_<年度>.xlsx の組をすべて読む。病院の名前・所在地・病床は新しい年度のものを使う
@@ -142,12 +142,17 @@ const dpcYears = readdirSync(src)
   .sort((a, b) => b - a);
 if (dpcYears.length === 0) throw new Error("dpc_mdc13_<年度>.xlsx がありません");
 const byId = new Map();
+/** すべての DPC 施設（血液の件数がない病院も）の所在地。院内がん登録の病院の場所を引くのに使う */
+const facilityIndex = new Map();
 for (const year of dpcYears) {
   const facilities = new Map();
   for (const r of rows(`dpc_facilities_${year}.xlsx`, "施設概要表").slice(1)) {
     const [id, , muni, , name, type, , , , , , , , , beds] = r;
     if (!id) continue;
-    facilities.set(String(id), { muni: String(muni ?? "").padStart(5, "0"), name, type, beds: num(beds) });
+    const f = { muni: String(muni ?? "").padStart(5, "0"), name, type, beds: num(beds) };
+    facilities.set(String(id), f);
+    const key = `${f.muni.slice(0, 2)}|${normName(name)}`;
+    if (/^\d{5}$/.test(f.muni) && !facilityIndex.has(key)) facilityIndex.set(key, { id: String(id), ...f });
   }
   const mdc = rows(`dpc_mdc13_${year}.xlsx`, "MDC13");
   const diseaseCol = Object.fromEntries(mdc[0].map((v, i) => [v, i]).filter(([v]) => DPC_DISEASES[v]));
@@ -172,6 +177,8 @@ for (const year of dpcYears) {
 }
 const hospitals = [...byId.values()];
 
+const prefShort = new Map([...prefNames].map(([code, name]) => [String(code).padStart(2, "0"), name.replace(/[都府県]$/, "")]));
+
 // ---- 院内がん登録の集計対象（がん診療連携拠点病院かどうか）を病院名で結びつける ----
 let hbcrMatched = 0;
 try {
@@ -179,7 +186,6 @@ try {
   const latest = (r) => [...r.slice(2, 10)].reverse().find((v) => v && v !== "提出なし") ?? null;
   const byPref = new Map();
   for (const r of reg) byPref.set(`${r[0]}|${normName(r[1])}`, latest(r));
-  const prefShort = new Map([...prefNames].map(([code, name]) => [String(code).padStart(2, "0"), name.replace(/[都府県]$/, "")]));
   for (const h of hospitals) {
     const p = prefShort.get(h.muni.slice(0, 2)) ?? "";
     const status = byPref.get(`${p}|${normName(h.name)}`) ?? byPref.get(`${p === "北海" ? "北海道" : p}|${normName(h.name)}`);
@@ -189,13 +195,91 @@ try {
   if (e.code !== "ENOENT") throw e;
 }
 
+// ---- 院内がん登録：病院ごとの新規登録数（診断年ごと） ----
+// 「院内がん登録データ_<年>-<年>_<部位>.csv」（Shift_JIS、がん情報サービスの「部位別登録数」から CSV 出力）を読む。
+// 件数は "12"・"1～3"（3件以下は幅で公表）・"該当なし"（0件）。[下限, 上限] で持つ。
+// DPC の病院と同じ都道府県で病院名が一致すれば結びつける。結びつかない病院も、所在市区町村なしで表に出す
+const prefCodeByShort = new Map([...prefShort].map(([code, name]) => [name, code]));
+prefCodeByShort.set("北海道", "01");
+const parseRegCount = (v) => {
+  const s = String(v ?? "").normalize("NFKC");
+  if (s === "該当なし") return [0, 0];
+  const range = s.match(/^(\d+)[~～〜](\d+)$/);
+  if (range) return [Number(range[1]), Number(range[2])];
+  return /^\d+$/.test(s) ? [Number(s), Number(s)] : null;
+};
+const readSjisCsv = (file) =>
+  new TextDecoder("shift_jis").decode(readFileSync(join(src, file)))
+    .split(/\r?\n/).filter((l) => l.trim())
+    .map((l) => [...l.matchAll(/"([^"]*)"/g)].map((m) => m[1]));
+const regFiles = readdirSync(src)
+  .map((f) => ({ f, m: f.match(/^院内がん登録データ_(\d{4})-\d{4}_(.+?)(（都道府県全体）)?\.csv$/) }))
+  .filter((x) => x.m);
+const regYears = [...new Set(regFiles.map((x) => Number(x.m[1])))].sort((a, b) => b - a);
+const regSites = [...new Set(regFiles.map((x) => x.m[2]))];
+const regPrefTotals = {}; // regPrefTotals[部位][年][都道府県コード] = [下限, 上限]
+let regMatched = 0;
+let regOnly = 0;
+/**
+ * 院内がん登録の病院名を DPC の施設の照合キーにする。完全一致がなければ、同じ都道府県で
+ * 一方の名前がもう一方の末尾と一致する施設（「日高会日高病院」と「日高病院」など）が1つだけのときにそれを使う。
+ */
+const facilityNamesByPref = new Map();
+for (const key of facilityIndex.keys()) {
+  const [p, n] = key.split("|");
+  facilityNamesByPref.set(p, [...(facilityNamesByPref.get(p) ?? []), n]);
+}
+const resolveFacilityKey = (code, name) => {
+  const n = normName(name);
+  if (facilityIndex.has(`${code}|${n}`) || n.length < 3) return `${code}|${n}`;
+  const hits = (facilityNamesByPref.get(code) ?? []).filter((f) => f.length >= 3 && (f.endsWith(n) || n.endsWith(f)));
+  return hits.length === 1 ? `${code}|${hits[0]}` : `${code}|${n}`;
+};
+const hospitalByName = new Map(hospitals.map((h) => [`${h.muni.slice(0, 2)}|${normName(h.name)}`, h]));
+for (const { f, m } of regFiles) {
+  const [, yearText, siteName, whole] = m;
+  const year = Number(yearText);
+  const table = readSjisCsv(f).slice(1);
+  if (whole) {
+    for (const [prefName, , total] of table) {
+      const code = prefCodeByShort.get(prefName);
+      const n = parseRegCount(total);
+      if (code && n) (((regPrefTotals[siteName] ??= {})[year] ??= {})[code] = n);
+    }
+    continue;
+  }
+  for (const [prefName, name, kind, , total] of table) {
+    const code = prefCodeByShort.get(prefName);
+    const n = parseRegCount(total);
+    if (!code || !n) continue;
+    const key = resolveFacilityKey(code, name);
+    let h = hospitalByName.get(key);
+    if (!h) {
+      // 血液の DPC 件数がない病院：DPC の施設一覧で所在地を引く。見つからなければ都道府県だけわかる行として足す
+      const f = facilityIndex.get(key);
+      h = f
+        ? { id: f.id, name: f.name, muni: f.muni, beds: f.beds, type: f.type, counts: {} }
+        : { id: `reg:${code}:${name}`, name, muni: `${code}000`, beds: 0, type: "", counts: {} };
+      h.hbcr = kind === "拠点外" ? "拠点外病院" : kind;
+      hospitals.push(h);
+      hospitalByName.set(key, h);
+      regOnly++;
+    } else if (!h.reg) regMatched++;
+    ((h.reg ??= {})[siteName] ??= {})[year] = n;
+  }
+}
+
 const prefs = [...prefNames].filter(([code]) => code !== 0).map(([code, name]) => ({ code, name }));
 const meta = {
   incidenceYears: YEARS,
   populationAsOf: asOf,
   survivalYear: 2018,
   dpcYears,
-  sites: SITES.map(({ id, name, icd, dpc, note, detail }) => ({ id, name, icd, dpc, note: note ?? null, derived: Boolean(detail) })),
+  regYears,
+  regPrefTotals,
+  sites: SITES.map(({ id, name, icd, dpc, note, detail, reg }) => ({
+    id, name, icd, dpc, note: note ?? null, derived: Boolean(detail), reg: reg && regSites.includes(reg) ? reg : null,
+  })),
   shares,
   dpcDiseases: DPC_DISEASES,
   prefs,
@@ -208,5 +292,6 @@ writeFileSync(join(out, "survival.json"), JSON.stringify(survival));
 writeFileSync(join(out, "municipalities.json"), JSON.stringify(muniList));
 writeFileSync(join(out, "hospitals.json"), JSON.stringify(hospitals));
 console.log(`院内がん登録の対象と結びついた病院 ${hbcrMatched}`);
+console.log(`院内がん登録の件数：部位 ${regSites.join("・") || "なし"}、診断年 ${regYears.join(",")}、DPCの病院と結びついた ${regMatched}、DPCにない病院 ${regOnly}`);
 console.log(`がん ${SITES.length}、都道府県 ${prefs.length}、市区町村（区を含む） ${muniList.length}（人口 ${asOf}）、DPC病院 ${hospitals.length}`);
 console.log("全国の詳細部位の割合", shares);

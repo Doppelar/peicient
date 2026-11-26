@@ -9,15 +9,22 @@ import {
   type Rates,
   type Survival,
 } from "./lib/estimate";
-import { fiscalYearLabel, forYear, formatDpc, rankHospitals, shortHospitalName, trendOf, type Hospital, type HospitalByYear } from "./lib/hospitals";
+import {
+  fiscalYearLabel, forYear, formatDpc, formatReg, hasNoMuni, rankHospitals, rankPoints, regTrendOf, shortHospitalName, trendOf,
+  type CountSource, type Hospital, type HospitalByYear, type HospitalData, type HospitalPoint,
+} from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
 
-type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean };
+type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean; reg: string | null };
 type Meta = {
   incidenceYears: number[];
   populationAsOf: string;
   survivalYear: number;
   dpcYears: number[];
+  /** 院内がん登録の診断年（新しい順） */
+  regYears: number[];
+  /** 院内がん登録の都道府県ごとの合計 [部位][診断年][都道府県コード2桁] */
+  regPrefTotals: Record<string, Record<string, Record<string, [number, number]>>>;
   sites: Site[];
   shares: Record<string, { m: number; f: number }>;
   dpcDiseases: Record<string, string>;
@@ -29,7 +36,7 @@ type Data = {
   rates: Record<string, Record<string, Rates>>;
   survival: Record<string, Survival>;
   municipalities: Municipality[];
-  hospitals: HospitalByYear[];
+  hospitals: HospitalData[];
 };
 
 const DEFAULT_SITE = "mm";
@@ -37,7 +44,7 @@ const DEFAULT_PREF = "群馬県";
 const TABS = [
   ["map", "地図"],
   ["areas", "市区町村"],
-  ["hospitals", "病院（DPC）"],
+  ["hospitals", "病院"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -61,7 +68,7 @@ export default function App() {
         <header className="mb-5">
           <h1 className="text-2xl font-bold">血液がんの患者数の推計と病院</h1>
           <p className="mt-1 text-sm text-slate-600">
-            全国がん登録の罹患率を市区町村の人口に当てはめた推計患者数と、厚生労働省 DPC データの病院ごとの退院件数を、地図と表で見られます。
+            全国がん登録の罹患率を市区町村の人口に当てはめた推計患者数と、病院ごとの患者数（院内がん登録の新規登録数、または DPC の退院件数）を、地図と表で見られます。
           </p>
         </header>
         {error && <p className="text-red-600">{error}</p>}
@@ -101,14 +108,26 @@ function Estimator({ data }: { data: Data }) {
     })),
     [inPref, estimates],
   );
-  const [dpcYear, setDpcYear] = useState(meta.dpcYears[0]);
+  // 病院の件数：院内がん登録（診断年）か DPC（年度）。その病気の院内がん登録がなければ DPC にする
+  const [countKey, setCountKey] = useState(meta.regYears.length ? `reg:${meta.regYears[0]}` : `dpc:${meta.dpcYears[0]}`);
+  const source: CountSource = useMemo(() => {
+    const [kind, year] = countKey.split(":");
+    if (kind === "reg" && site.reg) return { kind: "reg", year: Number(year), reg: site.reg };
+    return { kind: "dpc", year: kind === "dpc" ? Number(year) : meta.dpcYears[0], dpc: site.dpc };
+  }, [countKey, site.reg, site.dpc, meta.dpcYears]);
+  const dpcYear = source.kind === "dpc" ? source.year : meta.dpcYears[0];
+  const countLabel = source.kind === "reg"
+    ? `院内がん登録 ${source.reg} ${source.year}年診断の新規登録数`
+    : `DPC ${dpcLabel} ${fiscalYearLabel(source.year)}の退院件数`;
+  const points = useMemo(() => rankPoints(data.hospitals, prefCode, source), [data.hospitals, prefCode, source]);
   const hospitals = useMemo(() => rankHospitals(forYear(data.hospitals, dpcYear), prefCode, site.dpc), [data.hospitals, dpcYear, prefCode, site.dpc]);
+  const regPrefTotal = source.kind === "reg" ? meta.regPrefTotals[source.reg]?.[source.year]?.[String(prefCode).padStart(2, "0")] : undefined;
   const byYear = useMemo(() => new Map(data.hospitals.map((h) => [h.id, h])), [data.hospitals]);
   const muniName = useMemo(() => new Map(data.municipalities.map((m) => [m.code, m.name])), [data.municipalities]);
 
   const chosen = inPref.filter((m) => selected.has(m.code));
   const chosenTotal = chosen.length ? estimate(addPopulations(chosen), rates, survival) : null;
-  const chosenHospitals = hospitals.filter((h) => selected.has(h.muni));
+  const chosenHospitals = points.filter((p) => selected.has(p.h.muni));
   const toggle = (code: string) =>
     setSelected((s) => {
       const next = new Set(s);
@@ -139,9 +158,16 @@ function Estimator({ data }: { data: Data }) {
           </div>
         </fieldset>
         <label className="space-y-1 text-sm">
-          <span className="font-medium text-slate-700">病院の件数の年度（DPC）</span>
-          <select value={dpcYear} onChange={(e) => setDpcYear(Number(e.target.value))} className="h-10 w-full rounded-md border border-slate-300 bg-white px-2">
-            {meta.dpcYears.map((y) => <option key={y} value={y}>{fiscalYearLabel(y)}</option>)}
+          <span className="font-medium text-slate-700">病院の件数</span>
+          <select value={`${source.kind}:${source.year}`} onChange={(e) => setCountKey(e.target.value)} className="h-10 w-full rounded-md border border-slate-300 bg-white px-2">
+            {site.reg && (
+              <optgroup label="院内がん登録（新規の患者数・診断年）">
+                {meta.regYears.map((y) => <option key={y} value={`reg:${y}`}>院内がん登録 {y}年</option>)}
+              </optgroup>
+            )}
+            <optgroup label="DPC（退院件数・年度）">
+              {meta.dpcYears.map((y) => <option key={y} value={`dpc:${y}`}>DPC {fiscalYearLabel(y)}</option>)}
+            </optgroup>
           </select>
         </label>
         <fieldset className="space-y-1 text-sm">
@@ -156,7 +182,13 @@ function Estimator({ data }: { data: Data }) {
       {site.note && <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{site.note}</p>}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Summary title={`${pref}全体`} subtitle={site.name} e={prefTotal} hospitals={hospitals.length} />
+        <Summary
+          title={`${pref}全体`}
+          subtitle={site.name}
+          e={prefTotal}
+          hospitals={points.length}
+          note={regPrefTotal && `院内がん登録 ${source.year}年診断：県内の参加病院の合計 ${formatReg(regPrefTotal)}人（他県から受診した人や、複数の病院で登録された人も含みます）`}
+        />
         {chosenTotal ? (
           <Summary
             title={`選んだ地域（${chosen.length}）`}
@@ -184,20 +216,20 @@ function Estimator({ data }: { data: Data }) {
       {tab === "map" && (
         <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
           <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <MapView prefCode={prefCode} values={mapValues} perCapita={perCapita} hospitals={hospitals} dpc={site.dpc} dpcLabel={dpcLabel} selected={selected} onToggle={toggle} />
+            <MapView prefCode={prefCode} values={mapValues} perCapita={perCapita} points={points} countLabel={countLabel} selected={selected} onToggle={toggle} />
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
-            <h2 className="font-semibold">病院（{dpcLabel}の退院件数）</h2>
-            <p className="mb-2 text-xs text-slate-500">{fiscalYearLabel(dpcYear)}・上位</p>
+            <h2 className="font-semibold">病院（件数の多い順）</h2>
+            <p className="mb-2 text-xs text-slate-500">{countLabel}</p>
             <ol className="space-y-1">
-              {hospitals.slice(0, 15).map((h, i) => (
+              {points.slice(0, 15).map(({ h, label }, i) => (
                 <li key={h.id} className="flex justify-between gap-2">
                   <span className="flex min-w-0 items-center gap-1"><span className="truncate" title={h.name}>{i + 1}. {shortHospitalName(h.name)}</span>{h.hbcr === "拠点病院" && <HbcrBadge status={h.hbcr} />}</span>
-                  <span className="shrink-0 tabular-nums font-medium">{formatDpc(h.counts[site.dpc])}</span>
+                  <span className="shrink-0 tabular-nums font-medium">{label}</span>
                 </li>
               ))}
             </ol>
-            {hospitals.length === 0 && <p className="text-slate-500">10件以上の病院がありません</p>}
+            {points.length === 0 && <p className="text-slate-500">{source.kind === "dpc" ? "10件以上の病院がありません" : "登録のある病院がありません"}</p>}
           </section>
         </div>
       )}
@@ -206,7 +238,11 @@ function Estimator({ data }: { data: Data }) {
         <AreaTable rows={inPref} wardCodes={wardCodes} estimates={estimates} selected={selected} onToggle={toggle} />
       )}
 
-      {tab === "hospitals" && (
+      {tab === "hospitals" && source.kind === "reg" && (
+        <RegistryTable points={points} reg={source.reg} year={source.year} years={meta.regYears} dpc={site.dpc} dpcLabel={dpcLabel} dpcYear={meta.dpcYears[0]} muniName={muniName} estimates={estimates} />
+      )}
+
+      {tab === "hospitals" && source.kind === "dpc" && (
         <HospitalTable hospitals={hospitals} dpc={site.dpc} diseases={meta.dpcDiseases} muniName={muniName} estimates={estimates} dpcYear={dpcYear} years={meta.dpcYears} byYear={byYear} />
       )}
 
@@ -215,8 +251,8 @@ function Estimator({ data }: { data: Data }) {
   );
 }
 
-function Summary({ title, subtitle, e, hospitals, onClear }: {
-  title: string; subtitle: string; e: ReturnType<typeof estimate>; hospitals: number; onClear?: () => void;
+function Summary({ title, subtitle, e, hospitals, note, onClear }: {
+  title: string; subtitle: string; e: ReturnType<typeof estimate>; hospitals: number; note?: string; onClear?: () => void;
 }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -231,8 +267,9 @@ function Summary({ title, subtitle, e, hospitals, onClear }: {
         <div><dt className="text-xs text-slate-500">人口</dt><dd className="font-semibold tabular-nums">{e.population.toLocaleString("ja-JP")}</dd></div>
         <div><dt className="text-xs text-slate-500">年間新規（推計）</dt><dd className="text-lg font-semibold tabular-nums">{formatCount(e.annual.total)}人</dd></div>
         <div><dt className="text-xs text-slate-500">5年有病者（概算）</dt><dd className="text-lg font-semibold tabular-nums">{e.prevalence5 == null ? "—" : `${formatCount(e.prevalence5)}人`}</dd></div>
-        <div><dt className="text-xs text-slate-500">病院（DPC）</dt><dd className="text-lg font-semibold tabular-nums">{hospitals}</dd></div>
+        <div><dt className="text-xs text-slate-500">病院（件数あり）</dt><dd className="text-lg font-semibold tabular-nums">{hospitals}</dd></div>
       </dl>
+      {note && <p className="mt-2 text-xs text-slate-600">{note}</p>}
     </section>
   );
 }
@@ -339,6 +376,50 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear,
   );
 }
 
+function RegistryTable({ points, reg, year, years, dpc, dpcLabel, dpcYear, muniName, estimates }: {
+  points: HospitalPoint[]; reg: string; year: number; years: number[]; dpc: string; dpcLabel: string; dpcYear: number;
+  muniName: Map<string, string>; estimates: Map<string, ReturnType<typeof estimate>>;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+      <p className="px-4 py-2 text-xs text-slate-500">
+        国立がん研究センター 院内がん登録の部位別登録数（{reg}、{year}年に診断された患者さん）。がん診療連携拠点病院などの参加病院だけで、その病院で初めて診療した患者さんを1人1回数えます。3件以下は「1〜3」のように幅で公表されています。「推移」は診断年ごと、「DPC」は同じ病気の{fiscalYearLabel(dpcYear)}の退院件数（のべ件数）です。
+      </p>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-left text-xs text-slate-500">
+          <tr>
+            <th className="px-3 py-2">病院</th>
+            <th className="px-3 py-2">所在地</th>
+            <th className="px-3 py-2">がん拠点</th>
+            <th className="px-3 py-2 text-right text-slate-900">新規登録（{year}年）</th>
+            <th className="px-3 py-2">推移（{years.at(-1)}〜{years[0]}年）</th>
+            <th className="px-3 py-2 text-right">DPC {dpcLabel}</th>
+            <th className="px-3 py-2 text-right">所在地の推計患者数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.map(({ h, label }) => (
+            <tr key={h.id} className="border-t border-slate-100 hover:bg-slate-50">
+              <td className="px-3 py-1.5 font-medium" title={h.name}>{shortHospitalName(h.name)}</td>
+              <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{hasNoMuni(h) ? "—" : muniName.get(h.muni) ?? h.muni}</td>
+              <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
+              <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{label}</td>
+              <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
+                {regTrendOf(h, reg, years).map((t) => `${String(t.year).slice(2)}:${formatReg(t.count)}`).join(" → ")}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{formatDpc(h.counts[dpcYear]?.[dpc])}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">
+                {estimates.get(h.muni) ? `${formatCount(estimates.get(h.muni)!.annual.total)}人／年` : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {points.length === 0 && <p className="px-4 py-6 text-sm text-slate-500">この病気の登録がある病院はありません。</p>}
+    </div>
+  );
+}
+
 function Notes({ meta }: { meta: Meta }) {
   const years = `${meta.incidenceYears[0]}〜${meta.incidenceYears.at(-1)}年`;
   const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -355,11 +436,15 @@ function Notes({ meta }: { meta: Meta }) {
         </li>
         <li>人口は住民基本台帳（{meta.populationAsOf}）。罹患率の年より人口が新しいため、高齢化の分だけ登録の実数より多めに出ます（多発性骨髄腫の全国では、登録の約7,800人/年に対して約8,600人）。</li>
         <li>5年有病者数は、5年相対生存率（{meta.survivalYear}年診断）が一定の割合で下がると仮定した概算で、治療中の患者数そのものではありません。</li>
-        <li>「がん拠点」は国立がん研究センター 院内がん登録症例集計の集計対象施設一覧（最新の年）による区分で、病院名で結びつけています（名前の表記が違うと結びつかないことがあります）。院内がん登録の病院別の検索は上皮性のがんだけが対象で、血液がんの病院別の件数は公開されていないため、件数は DPC を使っています。</li>
-        <li>病院は DPC 対象病院のみで、地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
+        <li>「がん拠点」は国立がん研究センター 院内がん登録症例集計の集計対象施設一覧（最新の年）による区分で、病院名で結びつけています（名前の表記が違うと結びつかないことがあります）。</li>
+        <li>
+          病院の件数は2種類から選べます。「院内がん登録」は国立がん研究センターの部位別登録数（{meta.regYears.at(-1)}〜{meta.regYears[0]}年診断）で、その病院で新たに診療を始めた患者さんの数です（参加病院のみ）。
+          「DPC」は退院件数で、同じ患者さんの入院を重ねて数えます。院内がん登録の病院は名前で DPC の施設一覧と結びつけて所在地を出しており、結びつかなかった病院は表にだけ出します（所在地「—」）。
+        </li>
+        <li>地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
       </ul>
       <p>
-        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
+        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）・「院内がん登録 部位別登録数」／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
       </p>
     </section>
   );

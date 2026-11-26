@@ -1,11 +1,11 @@
-// 地図：市区町村を推計患者数で塗り分け、DPC の病院を件数の大きさの丸で重ねる。
+// 地図：市区町村を推計患者数で塗り分け、病院を件数（院内がん登録または DPC）の大きさの丸で重ねる。
 import { useEffect, useMemo, useState } from "react";
 import { geoMercator, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { Topology } from "topojson-specification";
 import { formatCount } from "./lib/estimate";
-import { dpcValue, formatDpc, shortHospitalName, spreadOffsets, type Hospital } from "./lib/hospitals";
+import { shortHospitalName, spreadOffsets, type HospitalPoint } from "./lib/hospitals";
 
 type Props = { N03_004: string | null; N03_003: string | null; N03_007: string | null };
 
@@ -40,13 +40,14 @@ function breaks(values: number[]): number[] {
   return [0.2, 0.4, 0.6, 0.8].map((q) => v[Math.min(v.length - 1, Math.floor(q * v.length))]);
 }
 
-export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel, selected, onToggle }: {
+export function MapView({ prefCode, values, perCapita, points, countLabel, selected, onToggle }: {
   prefCode: number;
   values: Map<string, MuniValue>;
   perCapita: boolean;
-  hospitals: Hospital[];
-  dpc: string;
-  dpcLabel: string;
+  /** 件数の多い順の病院 */
+  points: HospitalPoint[];
+  /** 丸の大きさが表すもの（例「院内がん登録 多発性骨髄腫 2023年診断の新規登録数」） */
+  countLabel: string;
   selected: Set<string>;
   onToggle: (code: string) => void;
 }) {
@@ -78,16 +79,16 @@ export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel,
 
   const markers = useMemo(() => {
     if (!drawn) return [];
-    const byMuni = new Map<string, Hospital[]>();
-    for (const h of hospitals) byMuni.set(h.muni, [...(byMuni.get(h.muni) ?? []), h]);
-    const max = Math.max(...hospitals.map((h) => dpcValue(h.counts[dpc])), 1);
+    const byMuni = new Map<string, HospitalPoint[]>();
+    for (const p of points) byMuni.set(p.h.muni, [...(byMuni.get(p.h.muni) ?? []), p]);
+    const max = Math.max(...points.map((p) => p.value), 1);
     return [...byMuni].flatMap(([muni, list]) => {
       const c = drawn.centroid.get(muni);
       if (!c) return [];
       const offsets = spreadOffsets(list.length, 10);
-      return list.map((h, i) => ({ h, x: c[0] + offsets[i][0], y: c[1] + offsets[i][1], r: 3 + Math.sqrt(dpcValue(h.counts[dpc]) / max) * 15 }));
+      return list.map((p, i) => ({ ...p, x: c[0] + offsets[i][0], y: c[1] + offsets[i][1], r: 3 + Math.sqrt(p.value / max) * 15 }));
     }).sort((a, b) => b.r - a.r);
-  }, [drawn, hospitals, dpc]);
+  }, [drawn, points]);
 
   if (!geo) return <div className="flex h-96 items-center justify-center text-sm text-slate-500">地図を読み込み中…</div>;
   if (!drawn) return <div className="flex h-96 items-center justify-center text-sm text-slate-500">この都道府県の地図がありません</div>;
@@ -131,7 +132,7 @@ export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel,
           })}
         </g>
         <g>
-          {markers.map(({ h, x, y, r }) => (
+          {markers.map(({ h, label, x, y, r }) => (
             <circle
               key={h.id}
               cx={x}
@@ -149,7 +150,7 @@ export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel,
                   html: (
                     <>
                       <b>{shortHospitalName(h.name)}</b>
-                      <br />{dpcLabel}：{formatDpc(h.counts[dpc])}件（退院）
+                      <br />{countLabel}：{label}件
                       {h.beds > 0 && <><br />{h.beds}床</>}
                       {h.hbcr && <><br />院内がん登録：{h.hbcr}</>}
                     </>
@@ -188,7 +189,7 @@ export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel,
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded-full bg-orange-600" />
-          病院（丸の大きさ＝DPCの{dpcLabel}の退院件数）
+          病院（丸の大きさ＝{countLabel}）
         </span>
         <span>市区町村を押すと選択できます</span>
       </div>

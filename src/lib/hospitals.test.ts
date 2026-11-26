@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, forYear, formatDpc, rankHospitals, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear } from "./hospitals";
+import { dpcValue, forYear, formatDpc, formatReg, hasNoMuni, rankHospitals, rankPoints, regTrendOf, regValue, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -24,6 +24,7 @@ describe("病院名を短くする", () => {
     expect(shortHospitalName("国立大学法人群馬大学医学部附属病院")).toBe("群馬大学医学部附属病院");
     expect(shortHospitalName("医療法人島門会本島総合病院")).toBe("本島総合病院");
     expect(shortHospitalName("前橋赤十字病院")).toBe("前橋赤十字病院");
+    expect(shortHospitalName("医療法人　社団　日高会　日高病院")).toBe("日高病院");
   });
 });
 
@@ -52,5 +53,45 @@ describe("年度の切り替え", () => {
       { year: 2021, count: undefined },
       { year: 2023, count: [69] },
     ]);
+  });
+});
+
+describe("院内がん登録の件数", () => {
+  const h = (id: string, muni: string, reg?: Record<string, [number, number]>, dpc?: number): HospitalData => ({
+    id, name: id, muni, beds: 0, type: "",
+    counts: dpc ? { 2023: { "130040": [dpc] } } : {},
+    reg: reg ? { 多発性骨髄腫: reg } : undefined,
+  });
+
+  it("幅のある件数は「1〜3」、0件や不明は区別して表示する", () => {
+    expect(formatReg([12, 12])).toBe("12");
+    expect(formatReg([1, 3])).toBe("1〜3");
+    expect(formatReg([0, 0])).toBe("0");
+    expect(formatReg(undefined)).toBe("—");
+    expect(regValue([1, 3])).toBe(2);
+  });
+
+  it("選んだ診断年で並べ、0件の病院は除く（DPC を選べば DPC の件数で並べる）", () => {
+    const list = [
+      h("a", "10201", { 2023: [41, 41] }, 69),
+      h("b", "10204", { 2023: [1, 3] }),
+      h("c", "10202", { 2023: [0, 0] }, 80),
+      h("d", "11100", { 2023: [99, 99] }),
+    ];
+    expect(rankPoints(list, 10, { kind: "reg", year: 2023, reg: "多発性骨髄腫" }).map((x) => [x.h.id, x.label])).toEqual([["a", "41"], ["b", "1〜3"]]);
+    expect(rankPoints(list, 10, { kind: "dpc", year: 2023, dpc: "130040" }).map((x) => x.h.id)).toEqual(["c", "a"]);
+  });
+
+  it("推移は古い年から並べる", () => {
+    expect(regTrendOf(h("a", "10201", { 2023: [41, 41], 2021: [26, 26] }), "多発性骨髄腫", [2023, 2022, 2021])).toEqual([
+      { year: 2021, count: [26, 26] },
+      { year: 2022, count: undefined },
+      { year: 2023, count: [41, 41] },
+    ]);
+  });
+
+  it("所在地がわからない病院は市区町村コードの末尾が000", () => {
+    expect(hasNoMuni({ muni: "10000" })).toBe(true);
+    expect(hasNoMuni({ muni: "10201" })).toBe(false);
   });
 });
