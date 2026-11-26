@@ -18,3 +18,7 @@ export function flowsOf(flows: readonly Flow[], prefCode: number): { inflow: Pre
 /** 件数の合計（幅のあるものは下限・上限をそれぞれ足す）。 */
 export const sumFlow = (list: readonly PrefFlow[]): RegCount =>
   list.reduce<RegCount>((s, f) => [s[0] + f.count[0], s[1] + f.count[1]], [0, 0]);
+
+/** 病院に他県から来た人（[住んでいる都道府県, 件数]）を、件数の多い順の PrefFlow に。 */
+export const hospitalInflow = (from: ReadonlyArray<[number, RegDetailCount]>): PrefFlow[] =>
+  from.map(([code, c]) => ({ code, count: toRegCount(c) })).sort((a, b) => regValue(b.count) - regValue(a.count) || a.code - b.code);

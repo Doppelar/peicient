@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
+import { dpcValue, forYear, formatDpc, formatReg, formatShare, hasNoMuni, regShare, rankHospitals, rankPoints, regTrendOf, regValue, shareStep, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear, type HospitalData } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -104,5 +104,11 @@ describe("院内がん登録の内訳の割合", () => {
     expect(formatShare(regShare([[1, 3], 0], [1]))).toBe("0%");
     expect(formatShare(regShare([0, 0], [0]))).toBe("—");
     expect(formatShare(regShare(undefined, [0]))).toBe("—");
+  });
+});
+
+describe("割合の色の段階", () => {
+  it("20%ごとに分け、100%は最後の段階", () => {
+    expect([0, 19, 20, 59, 80, 100].map(shareStep)).toEqual([0, 0, 1, 2, 4, 4]);
   });
 });

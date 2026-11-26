@@ -91,6 +91,10 @@ function Estimator({ data }: { data: Data }) {
   const [tab, setTab] = useState<Tab>("map");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const detail = useRegDetail();
+  /** 病院の丸の色に使う内訳（SHARE_COLUMNS の見出し）。null なら一色 */
+  const [metric, setMetric] = useState<string | null>(null);
+  /** 患者の流れを見る病院 */
+  const [picked, setPicked] = useState<string | null>(null);
 
   const site = meta.sites.find((s) => s.id === siteId) ?? meta.sites[0];
   const prefCode = meta.prefs.find((p) => p.name === pref)?.code ?? 0;
@@ -128,6 +132,22 @@ function Estimator({ data }: { data: Data }) {
   const regPrefTotal = source.kind === "reg" ? meta.regPrefTotals[source.reg]?.[source.year]?.[String(prefCode).padStart(2, "0")] : undefined;
   const byYear = useMemo(() => new Map(data.hospitals.map((h) => [h.id, h])), [data.hospitals]);
   const muniName = useMemo(() => new Map(data.municipalities.map((m) => [m.code, m.name])), [data.municipalities]);
+
+  const flowYear = source.kind === "reg" ? source.year : meta.regYears[0];
+  const colorBy = useMemo(() => {
+    const col = SHARE_COLUMNS.find(([label]) => label === metric);
+    if (!col || !detail || source.kind !== "reg") return null;
+    const [label, dim, labels] = col;
+    const idx = labels.map((l) => detail.dims[dim]?.indexOf(l) ?? -1).filter((i) => i >= 0);
+    return { label: `${label}の割合`, pctOf: (id: string) => regShare(detail.hospitals[id]?.[source.reg]?.[dim]?.[source.year], idx)?.pct ?? null };
+  }, [metric, detail, source]);
+  // 流れを見られる病院：住所の内訳が公表されている（10件以上の）病院
+  const flowHospitals = site.reg ? points.filter(({ h }) => detail?.hospitals[h.id]?.[site.reg!]?.["住所"]?.[flowYear]) : [];
+  const pickedPoint = flowHospitals.find(({ h }) => h.id === picked);
+  const pickedFlow = pickedPoint && site.reg
+    ? { name: shortHospitalName(pickedPoint.h.name), muni: pickedPoint.h.muni, from: detail?.hospitalFlows?.[site.reg]?.[flowYear]?.[pickedPoint.h.id] ?? [] }
+    : undefined;
+  const pickedHome = pickedPoint && site.reg ? detail?.hospitals[pickedPoint.h.id]?.[site.reg]?.["住所"]?.[flowYear] : undefined;
 
   const chosen = inPref.filter((m) => selected.has(m.code));
   const chosenTotal = chosen.length ? estimate(addPopulations(chosen), rates, survival) : null;
@@ -220,7 +240,19 @@ function Estimator({ data }: { data: Data }) {
       {tab === "map" && (
         <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
           <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <MapView prefCode={prefCode} values={mapValues} perCapita={perCapita} points={points} countLabel={countLabel} selected={selected} onToggle={toggle} />
+            {source.kind === "reg" && detail && (
+              <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" role="group" aria-label="病院の丸の色">
+                <span className="mr-1 text-slate-500">病院の丸の色</span>
+                {[null, ...SHARE_COLUMNS.map(([label]) => label)].map((k) => (
+                  <button key={k ?? "none"} type="button" aria-pressed={metric === k} onClick={() => setMetric(k)}
+                    className={`rounded-full px-2.5 py-1 ${metric === k ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>
+                    {k ?? "一色"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <MapView prefCode={prefCode} values={mapValues} perCapita={perCapita} points={points} countLabel={countLabel} selected={selected} onToggle={toggle}
+              colorBy={colorBy} picked={pickedFlow ? picked : null} onPick={flowHospitals.length ? (id) => setPicked(id === picked ? null : id) : undefined} />
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
             <h2 className="font-semibold">病院（件数の多い順）</h2>
@@ -253,11 +285,26 @@ function Estimator({ data }: { data: Data }) {
         <TrendSection pref={pref} prefCode={prefCode} source={source} meta={meta} hospitals={data.hospitals} points={points} dpcLabel={dpcLabel} />
       )}
 
-      {tab === "map" && site.reg && detail?.flows?.[site.reg]?.[source.kind === "reg" ? source.year : meta.regYears[0]] && (
+      {tab === "map" && site.reg && detail?.flows?.[site.reg]?.[flowYear] && (
         <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <h2 className="px-1 font-semibold">都道府県をまたぐ患者の移動</h2>
-          <p className="mb-1 px-1 text-xs text-slate-500">院内がん登録の「住所」の集計から、{pref}の参加病院に他県から来た人と、{pref}に住んでいて他県の参加病院で登録された人を矢印で示します（{source.kind === "reg" ? source.year : meta.regYears[0]}年診断）。参加病院だけの数で、3件以下は「1〜3」のような幅です。</p>
-          <FlowMap prefCode={prefCode} flows={detail.flows[site.reg][source.kind === "reg" ? source.year : meta.regYears[0]]} year={source.kind === "reg" ? source.year : meta.regYears[0]} site={site.reg} />
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <h2 className="font-semibold">{pickedFlow ? `${pickedFlow.name}に来た患者の流れ` : "都道府県をまたぐ患者の移動"}</h2>
+            {flowHospitals.length > 0 && (
+              <label className="flex items-center gap-1 text-sm">
+                <span className="text-slate-600">見る範囲</span>
+                <select value={pickedFlow ? picked! : ""} onChange={(e) => setPicked(e.target.value || null)} className="h-8 rounded-md border border-slate-300 bg-white px-2">
+                  <option value="">{pref}全体</option>
+                  {flowHospitals.map(({ h, label }) => <option key={h.id} value={h.id}>{shortHospitalName(h.name)}（{label}人）</option>)}
+                </select>
+              </label>
+            )}
+          </div>
+          <p className="mb-1 px-1 text-xs text-slate-500">
+            {pickedFlow
+              ? <>院内がん登録の「住所」から、{pickedFlow.name}で{flowYear}年に登録された人がどこに住んでいるかを示します。{pickedHome && <b className="text-slate-700">{pref}内 {formatReg(toRegCount(pickedHome[0]))}人（{formatShare(regShare(pickedHome, [0]))}）・{pref}の外 {formatReg(toRegCount(pickedHome[1]))}人（{formatShare(regShare(pickedHome, [1]))}）。</b>}内訳は10件以上の病院だけ公表されています。</>
+              : <>院内がん登録の「住所」の集計から、{pref}の参加病院に他県から来た人と、{pref}に住んでいて他県の参加病院で登録された人を矢印で示します（{flowYear}年診断）。参加病院だけの数で、3件以下は「1〜3」のような幅です。上の地図で病院の丸を押すか、右上で選ぶと、その病院の分になります。</>}
+          </p>
+          <FlowMap prefCode={prefCode} flows={detail.flows[site.reg][flowYear]} year={flowYear} site={site.reg} hospital={pickedFlow} />
         </section>
       )}
 

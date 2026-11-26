@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flowsOf, sumFlow, type Flow } from "./flows";
+import { flowsOf, sumFlow, type Flow, hospitalInflow } from "./flows";
 
 describe("都道府県をまたぐ患者の移動", () => {
   const flows: Flow[] = [[11, 10, 10], [9, 10, [4, 6]], [10, 13, [4, 6]], [1, 10, [1, 3]], [13, 11, 50]];
@@ -12,5 +12,11 @@ describe("都道府県をまたぐ患者の移動", () => {
 
   it("合計は幅のまま足す", () => {
     expect(sumFlow(flowsOf(flows, 10).inflow)).toEqual([15, 19]);
+  });
+});
+
+describe("病院に他県から来た人", () => {
+  it("件数の多い順にし、幅のない件数も [下限, 上限] にする", () => {
+    expect(hospitalInflow([[13, [1, 3]], [11, 5]])).toEqual([{ code: 11, count: [5, 5] }, { code: 13, count: [1, 3] }]);
   });
 });

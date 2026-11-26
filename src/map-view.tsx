@@ -5,7 +5,7 @@ import { feature } from "topojson-client";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { Topology } from "topojson-specification";
 import { formatCount } from "./lib/estimate";
-import { shortHospitalName, spreadOffsets, type HospitalPoint } from "./lib/hospitals";
+import { shareStep, shortHospitalName, spreadOffsets, type HospitalPoint } from "./lib/hospitals";
 
 type Props = { N03_004: string | null; N03_003: string | null; N03_007: string | null };
 
@@ -15,6 +15,12 @@ const W = 760;
 const H = 640;
 /** 塗り分けの5段階（青の濃淡） */
 const STEPS = ["#e0f2fe", "#bae6fd", "#7dd3fc", "#38bdf8", "#0284c7"];
+/** 病院の丸を割合で塗るときの5段階（橙の濃淡、0〜19%・20〜39%…80%以上） */
+const SHARE_STEPS = ["#fde0c5", "#fbb47e", "#f4843f", "#d9600f", "#9a3d07"];
+const NO_SHARE = "#cbd5e1";
+
+/** 病院の丸の色を、割合（内訳）で塗るとき */
+export type ColorBy = { label: string; pctOf: (id: string) => number | null };
 
 function useGeo(prefCode: number) {
   const [geo, setGeo] = useState<FeatureCollection<Geometry, Props> | null>(null);
@@ -40,7 +46,7 @@ function breaks(values: number[]): number[] {
   return [0.2, 0.4, 0.6, 0.8].map((q) => v[Math.min(v.length - 1, Math.floor(q * v.length))]);
 }
 
-export function MapView({ prefCode, values, perCapita, points, countLabel, selected, onToggle }: {
+export function MapView({ prefCode, values, perCapita, points, countLabel, selected, onToggle, colorBy, picked, onPick }: {
   prefCode: number;
   values: Map<string, MuniValue>;
   perCapita: boolean;
@@ -50,6 +56,10 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
   countLabel: string;
   selected: Set<string>;
   onToggle: (code: string) => void;
+  colorBy?: ColorBy | null;
+  /** 選んだ病院（太い枠で示す） */
+  picked?: string | null;
+  onPick?: (id: string) => void;
 }) {
   const geo = useGeo(prefCode);
   const [hover, setHover] = useState<{ x: number; y: number; html: React.ReactNode } | null>(null);
@@ -132,16 +142,20 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
           })}
         </g>
         <g>
-          {markers.map(({ h, label, x, y, r }) => (
+          {markers.map(({ h, label, x, y, r }) => {
+            const pct = colorBy ? colorBy.pctOf(h.id) : null;
+            return (
             <circle
               key={h.id}
               cx={x}
               cy={y}
               r={r}
-              fill="#ea580c"
-              fillOpacity={0.85}
-              stroke="#ffffff"
-              strokeWidth={1.5}
+              fill={!colorBy ? "#ea580c" : pct == null ? NO_SHARE : SHARE_STEPS[shareStep(pct)]}
+              fillOpacity={colorBy ? 0.95 : 0.85}
+              stroke={picked === h.id ? "#0f172a" : "#ffffff"}
+              strokeWidth={picked === h.id ? 3 : 1.5}
+              className={onPick ? "cursor-pointer" : undefined}
+              onClick={() => onPick?.(h.id)}
               onMouseMove={(e) => {
                 const box = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
                 setHover({
@@ -153,12 +167,15 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
                       <br />{countLabel}：{label}件
                       {h.beds > 0 && <><br />{h.beds}床</>}
                       {h.hbcr && <><br />院内がん登録：{h.hbcr}</>}
+                      {colorBy && <><br />{colorBy.label}：{pct == null ? "公表なし（10件未満）" : `${pct}%`}</>}
+                      {onPick && <><br /><span className="text-slate-300">押すと、この病院の患者の流れを下の地図に出します</span></>}
                     </>
                   ),
                 });
               }}
             />
-          ))}
+            );
+          })}
         </g>
         <g pointerEvents="none">
           {/* 件数の多い上位5病院は名前を出す */}
@@ -188,9 +205,18 @@ export function MapView({ prefCode, values, perCapita, points, countLabel, selec
           ))}
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded-full bg-orange-600" />
+          {!colorBy && <span className="inline-block h-3 w-3 rounded-full bg-orange-600" />}
           病院（丸の大きさ＝{countLabel}）
         </span>
+        {colorBy && (
+          <span className="flex items-center gap-1">
+            丸の色＝{colorBy.label}
+            {SHARE_STEPS.map((c, i) => (
+              <span key={c} className="flex items-center gap-0.5"><span className="inline-block h-3 w-3 rounded-full" style={{ background: c }} />{i === 0 ? "0%" : i === SHARE_STEPS.length - 1 ? "80%〜" : ""}</span>
+            ))}
+            <span className="ml-1 flex items-center gap-0.5"><span className="inline-block h-3 w-3 rounded-full" style={{ background: NO_SHARE }} />公表なし</span>
+          </span>
+        )}
         <span>市区町村を押すと選択できます</span>
       </div>
     </div>

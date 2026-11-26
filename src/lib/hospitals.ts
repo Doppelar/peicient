@@ -126,6 +126,8 @@ export type RegDetail = {
   hospitals: Record<string, Record<string, Record<string, Record<string, RegDetailCount[]>>>>;
   /** flows[部位][診断年] = [住んでいる都道府県, 受診した都道府県, 件数][]（都道府県をまたぐものだけ） */
   flows?: Record<string, Record<string, Array<[number, number, RegDetailCount]>>>;
+  /** hospitalFlows[部位][診断年][病院id] = [住んでいる都道府県, 件数][]（病院のある都道府県の外から来た人だけ） */
+  hospitalFlows?: Record<string, Record<string, Record<string, Array<[number, RegDetailCount]>>>>;
 };
 
 export const toRegCount = (c: RegDetailCount): RegCount => (typeof c === "number" ? [c, c] : c);
@@ -144,3 +146,6 @@ export function regShare(row: RegDetailCount[] | undefined, pick: readonly numbe
 }
 
 export const formatShare = (s: ReturnType<typeof regShare>) => (s ? `${s.approx ? "約" : ""}${s.pct}%` : "—");
+
+/** 割合（%）を5段階の色の番号に（0〜19%→0 … 80%以上→4） */
+export const shareStep = (pct: number) => Math.max(0, Math.min(4, Math.floor(pct / 20)));

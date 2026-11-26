@@ -275,6 +275,7 @@ for (const { f, m } of regFiles) {
 const regDims = {}; // regDims[内訳] = 列名
 const regDetail = {}; // regDetail[病院id][部位][内訳][年] = [下限, 上限][]
 const regFlows = {}; // regFlows[部位][年] = [住んでいる都道府県, 受診した都道府県, 件数][]（都道府県をまたぐものだけ）
+const regHospFlows = {}; // regHospFlows[部位][年][病院id] = [住んでいる都道府県, 件数][]（病院のある都道府県の外から来た人だけ）
 const sumCounts = (cs) => cs.reduce((a, c) => [a[0] + c[0], a[1] + c[1]], [0, 0]);
 for (const dir of readdirSync(src, { withFileTypes: true }).filter((e) => e.isDirectory())) {
   const dim = dir.name;
@@ -313,12 +314,20 @@ for (const dir of readdirSync(src, { withFileTypes: true }).filter((e) => e.isDi
            sumCounts(counts.filter((_, i) => cols[i] !== prefName && cols[i] !== "不明")),
            sumCounts(counts.filter((_, i) => cols[i] === "不明"))]
         : counts;
+      if (dim === "住所") {
+        const from = [];
+        cols.forEach((col, i) => {
+          const c = prefCodeByShort.get(col);
+          if (c && col !== prefName && counts[i][1] > 0) from.push([Number(c), counts[i][0] === counts[i][1] ? counts[i][0] : counts[i]]);
+        });
+        if (from.length) (((regHospFlows[m[2]] ??= {})[m[1]] ??= {})[h.id] = from);
+      }
       // 幅のない件数は数字だけにして小さくする
       ((((regDetail[h.id] ??= {})[m[2]] ??= {})[dim] ??= {})[m[1]] = row.map((c) => (c[0] === c[1] ? c[0] : c)));
     }
   }
 }
-writeFileSync(join(out, "reg-detail.json"), JSON.stringify({ dims: regDims, hospitals: regDetail, flows: regFlows }));
+writeFileSync(join(out, "reg-detail.json"), JSON.stringify({ dims: regDims, hospitals: regDetail, flows: regFlows, hospitalFlows: regHospFlows }));
 console.log(`院内がん登録の内訳：${Object.keys(regDims).join("・") || "なし"}、病院 ${Object.keys(regDetail).length}`);
 
 const prefs = [...prefNames].filter(([code]) => code !== 0).map(([code, name]) => ({ code, name }));
