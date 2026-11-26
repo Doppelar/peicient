@@ -1,0 +1,36 @@
+import { describe, expect, it } from "vitest";
+import { dpcValue, formatDpc, rankHospitals, shortHospitalName, spreadOffsets, type Hospital } from "./hospitals";
+
+describe("DPCの件数", () => {
+  it("伏せられた区分があるときは「以上」を付ける", () => {
+    expect(formatDpc([69])).toBe("69");
+    expect(formatDpc([14, 1])).toBe("14以上");
+    expect(formatDpc(undefined)).toBe("—");
+    expect(dpcValue(undefined)).toBe(0);
+  });
+
+  it("都道府県で絞り、件数の多い順に並べる（その病気の件数がない病院は除く）", () => {
+    const h = (id: string, muni: string, n?: number): Hospital => ({
+      id, name: id, muni, beds: 0, type: "", counts: n ? { "130040": [n] } : {},
+    });
+    const list = [h("a", "10201", 40), h("b", "10208", 69), h("c", "11100", 99), h("d", "10202")];
+    expect(rankHospitals(list, 10, "130040").map((x) => x.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("病院名を短くする", () => {
+  it("法人名を外す", () => {
+    expect(shortHospitalName("独立行政法人国立病院機構　渋川医療センター")).toBe("渋川医療センター");
+    expect(shortHospitalName("国立大学法人群馬大学医学部附属病院")).toBe("群馬大学医学部附属病院");
+    expect(shortHospitalName("医療法人島門会本島総合病院")).toBe("本島総合病院");
+    expect(shortHospitalName("前橋赤十字病院")).toBe("前橋赤十字病院");
+  });
+});
+
+describe("重ならない位置", () => {
+  it("1つ目は中心、2つ目以降は中心から離れる", () => {
+    const o = spreadOffsets(4);
+    expect(o[0]).toEqual([0, 0]);
+    for (const [x, y] of o.slice(1)) expect(Math.hypot(x, y)).toBeGreaterThan(5);
+  });
+});
