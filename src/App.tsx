@@ -184,7 +184,7 @@ function Estimator({ data }: { data: Data }) {
             <ol className="space-y-1">
               {hospitals.slice(0, 15).map((h, i) => (
                 <li key={h.id} className="flex justify-between gap-2">
-                  <span className="min-w-0 truncate" title={h.name}>{i + 1}. {shortHospitalName(h.name)}</span>
+                  <span className="flex min-w-0 items-center gap-1"><span className="truncate" title={h.name}>{i + 1}. {shortHospitalName(h.name)}</span>{h.hbcr === "拠点病院" && <HbcrBadge status={h.hbcr} />}</span>
                   <span className="shrink-0 tabular-nums font-medium">{formatDpc(h.counts[site.dpc])}</span>
                 </li>
               ))}
@@ -297,6 +297,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear 
           <tr>
             <th className="px-3 py-2">病院</th>
             <th className="px-3 py-2">所在地</th>
+            <th className="px-3 py-2">がん拠点</th>
             <th className="px-3 py-2 text-right">病床</th>
             {codes.map((c) => (
               <th key={c} className={`px-3 py-2 text-right ${c === dpc ? "text-slate-900" : ""}`}>{diseases[c]}</th>
@@ -309,6 +310,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear 
             <tr key={h.id} className="border-t border-slate-100 hover:bg-slate-50">
               <td className="px-3 py-1.5 font-medium" title={h.name}>{shortHospitalName(h.name)}</td>
               <td className="whitespace-nowrap px-3 py-1.5 text-slate-600">{muniName.get(h.muni) ?? h.muni}</td>
+              <td className="whitespace-nowrap px-3 py-1.5"><HbcrBadge status={h.hbcr} /></td>
               <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{h.beds || "—"}</td>
               {codes.map((c) => (
                 <td key={c} className={`px-3 py-1.5 text-right tabular-nums ${c === dpc ? "font-semibold" : "text-slate-600"}`}>{formatDpc(h.counts[c])}</td>
@@ -341,11 +343,23 @@ function Notes({ meta }: { meta: Meta }) {
         </li>
         <li>人口は住民基本台帳（{meta.populationAsOf}）。罹患率の年より人口が新しいため、高齢化の分だけ登録の実数より多めに出ます（多発性骨髄腫の全国では、登録の約7,800人/年に対して約8,600人）。</li>
         <li>5年有病者数は、5年相対生存率（{meta.survivalYear}年診断）が一定の割合で下がると仮定した概算で、治療中の患者数そのものではありません。</li>
+        <li>「がん拠点」は国立がん研究センター 院内がん登録症例集計の集計対象施設一覧（最新の年）による区分で、病院名で結びつけています（名前の表記が違うと結びつかないことがあります）。院内がん登録の病院別の検索は上皮性のがんだけが対象で、血液がんの病院別の件数は公開されていないため、件数は DPC を使っています。</li>
         <li>病院は DPC 対象病院のみで、地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
       </ul>
       <p>
         出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
       </p>
     </section>
+  );
+}
+
+/** 院内がん登録での区分。拠点病院を目立たせる。 */
+function HbcrBadge({ status }: { status?: string }) {
+  if (!status) return <span className="text-xs text-slate-400">—</span>;
+  const strong = status === "拠点病院";
+  return (
+    <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${strong ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
+      {status === "拠点病院" ? "拠点" : status === "拠点外病院" ? "登録参加" : status}
+    </span>
   );
 }

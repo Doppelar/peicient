@@ -27,6 +27,7 @@
 3. 同じダウンロードページの `cancer_incidenceNCR(2016-2023).xls`（全国の詳細部位）
 4. 厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」から
    - 「疾患別手術別集計_MDC13」を `dpc_mdc13.xlsx`、「施設概要表」を `dpc_facilities.xlsx` という名前で保存
+5. （任意）国立がん研究センター「[院内がん登録症例集計結果閲覧システム](https://jhcr-cs.ganjoho.jp/hbcrtables/)」の「集計対象施設一覧」を `hbcr_facilities.xlsx` という名前で保存（病院の「がん拠点」表示に使います）
 
 これらを同じフォルダ（例：`data-raw/`、git には入れない）に置いて実行します。
 
@@ -50,6 +51,7 @@ npm run build
 - 国立がん研究センターがん情報サービス「がん統計」（全国がん登録）
 - 総務省「住民基本台帳に基づく人口、人口動態及び世帯数」
 - 厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和5年度）
+- 国立がん研究センター 院内がん登録症例集計「集計対象施設一覧」
 - 地図：国土交通省 国土数値情報（行政区域）を SmartNews Media Research Institute が加工した TopoJSON（[japan-topography](https://github.com/smartnews-smri/japan-topography)）、`public/geo/`
 
 推計値はこのサイトで計算したもので、出典元によるものではありません。

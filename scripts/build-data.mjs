@@ -8,9 +8,11 @@
 //   - muni_age.xlsx                             … 総務省 住民基本台帳 年齢階級別人口（市区町村別・総計）
 //   - dpc_mdc13.xlsx                            … 厚生労働省 DPC 退院患者調査「疾患別手術別集計_MDC13」
 //   - dpc_facilities.xlsx                       … 同「施設概要表」
+//   - hbcr_facilities.xlsx                      … 国立がん研究センター 院内がん登録症例集計「集計対象施設一覧」（任意）
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import XLSX from "xlsx";
+import { shortHospitalName } from "../src/lib/hospitals.ts";
 
 const src = process.argv[2];
 if (!src) throw new Error("元データのフォルダを指定してください");
@@ -153,6 +155,25 @@ for (const r of mdc.slice(4)) {
   hospitals.push({ id, name: f.name, muni: f.muni, beds: f.beds, type: f.type, counts });
 }
 
+// ---- 院内がん登録の集計対象（がん診療連携拠点病院かどうか）を病院名で結びつける ----
+const normName = (s) =>
+  shortHospitalName(String(s)).normalize("NFKC").replace(/[s・()（）]/g, "").replace(/^(JA)?[^s]*?厚生連/, "").replace(/総合病院/g, "病院");
+let hbcrMatched = 0;
+try {
+  const reg = rows("hbcr_facilities.xlsx", "集計対象施設一覧").slice(2).filter((r) => r[1]);
+  const latest = (r) => [...r.slice(2, 10)].reverse().find((v) => v && v !== "提出なし") ?? null;
+  const byPref = new Map();
+  for (const r of reg) byPref.set(`${r[0]}|${normName(r[1])}`, latest(r));
+  const prefShort = new Map([...prefNames].map(([code, name]) => [String(code).padStart(2, "0"), name.replace(/[都府県]$/, "")]));
+  for (const h of hospitals) {
+    const p = prefShort.get(h.muni.slice(0, 2)) ?? "";
+    const status = byPref.get(`${p}|${normName(h.name)}`) ?? byPref.get(`${p === "北海" ? "北海道" : p}|${normName(h.name)}`);
+    if (status) { h.hbcr = status; hbcrMatched++; }
+  }
+} catch (e) {
+  if (e.code !== "ENOENT") throw e;
+}
+
 const prefs = [...prefNames].filter(([code]) => code !== 0).map(([code, name]) => ({ code, name }));
 const meta = {
   incidenceYears: YEARS,
@@ -171,5 +192,6 @@ writeFileSync(join(out, "rates.json"), JSON.stringify(rates));
 writeFileSync(join(out, "survival.json"), JSON.stringify(survival));
 writeFileSync(join(out, "municipalities.json"), JSON.stringify(muniList));
 writeFileSync(join(out, "hospitals.json"), JSON.stringify(hospitals));
+console.log(`院内がん登録の対象と結びついた病院 ${hbcrMatched}`);
 console.log(`がん ${SITES.length}、都道府県 ${prefs.length}、市区町村（区を含む） ${muniList.length}（人口 ${asOf}）、DPC病院 ${hospitals.length}`);
 console.log("全国の詳細部位の割合", shares);

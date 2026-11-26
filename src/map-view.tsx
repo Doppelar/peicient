@@ -151,6 +151,7 @@ export function MapView({ prefCode, values, perCapita, hospitals, dpc, dpcLabel,
                       <b>{shortHospitalName(h.name)}</b>
                       <br />{dpcLabel}：{formatDpc(h.counts[dpc])}件（退院）
                       {h.beds > 0 && <><br />{h.beds}床</>}
+                      {h.hbcr && <><br />院内がん登録：{h.hbcr}</>}
                     </>
                   ),
                 });

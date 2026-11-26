@@ -10,6 +10,8 @@ export type Hospital = {
   beds: number;
   type: string;
   counts: Record<string, DpcCount>;
+  /** 院内がん登録での区分（拠点病院・拠点外病院・小児がん病院）。対象外ならなし */
+  hbcr?: string;
 };
 
 /** 表示用。伏せられた区分があるときは「以上」を付ける。 */
