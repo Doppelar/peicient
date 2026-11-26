@@ -6,10 +6,10 @@
 //   - cancer_incidenceNCR(2016-2023).xls      … 全国がん登録 全国罹患数（ICD-10 の詳細部位）
 //   - cancer_survivalNCR(2016-2018).xlsx       … 全国がん登録 5年相対生存率
 //   - muni_age.xlsx                             … 総務省 住民基本台帳 年齢階級別人口（市区町村別・総計）
-//   - dpc_mdc13.xlsx                            … 厚生労働省 DPC 退院患者調査「疾患別手術別集計_MDC13」
-//   - dpc_facilities.xlsx                       … 同「施設概要表」
+//   - dpc_mdc13_<年度>.xlsx                     … 厚生労働省 DPC 退院患者調査「疾患別手術別集計_MDC13」（年度ごと、例 dpc_mdc13_2023.xlsx）
+//   - dpc_facilities_<年度>.xlsx                … 同「施設概要表」（同じ年度）
 //   - hbcr_facilities.xlsx                      … 国立がん研究センター 院内がん登録症例集計「集計対象施設一覧」（任意）
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import XLSX from "xlsx";
 import { shortHospitalName } from "../src/lib/hospitals.ts";
@@ -128,36 +128,51 @@ for (const r of muniRows.slice(3)) {
 const sumPop = (m) => [...m.m, ...m.f].reduce((x, y) => x + y, 0);
 const muniList = [...municipalities.values()].filter((m) => sumPop(m) > 0);
 
-// ---- DPC：病院ごとの血液疾患の退院件数 ----
-const facilities = new Map();
-for (const r of rows("dpc_facilities.xlsx", "施設概要表").slice(1)) {
-  const [id, , muni, , name, type, , , , , , , , , beds] = r;
-  if (!id) continue;
-  facilities.set(String(id), { muni: String(muni ?? "").padStart(5, "0"), name, type, beds: num(beds) });
-}
-const mdc = rows("dpc_mdc13.xlsx", "MDC13");
-const diseaseCol = Object.fromEntries(mdc[0].map((v, i) => [v, i]).filter(([v]) => DPC_DISEASES[v]));
-const hospitals = [];
-for (const r of mdc.slice(4)) {
-  const id = String(r[0] ?? "");
-  const f = facilities.get(id);
-  if (!f || !/^\d{5}$/.test(f.muni)) continue;
-  const counts = {};
-  for (const [code, col] of Object.entries(diseaseCol)) {
-    // 99（手術なし）と 97（その他の手術あり）の合計。「-」は10件未満（0件を含む）
-    const cells = [r[col], r[col + 1]];
-    const known = cells.filter((c) => typeof c === "number");
-    const n = known.reduce((a, b) => a + b, 0);
-    const masked = cells.some((c) => typeof c !== "number");
-    if (n > 0) counts[code] = masked ? [n, 1] : [n];
+/** 病院名を照合用にそろえる（法人名・空白・括弧を外す）。 */
+const normName = (s) =>
+  shortHospitalName(String(s)).normalize("NFKC").replace(/[\s・()（）]/g, "").replace(/^(JA)?[^\s]*?厚生連/, "").replace(/総合病院/g, "病院");
+
+// ---- DPC：病院ごとの血液疾患の退院件数（年度ごと） ----
+// dpc_mdc13_<年度>.xlsx と dpc_facilities_<年度>.xlsx の組をすべて読む。病院の名前・所在地・病床は新しい年度のものを使う
+// 告示番号は年度によって変わるため、年度をまたぐ照合は「所在市区町村＋病院名」で行う
+const dpcYears = readdirSync(src)
+  .map((f) => f.match(/^dpc_mdc13_(\d{4})\.xlsx$/)?.[1])
+  .filter(Boolean)
+  .map(Number)
+  .sort((a, b) => b - a);
+if (dpcYears.length === 0) throw new Error("dpc_mdc13_<年度>.xlsx がありません");
+const byId = new Map();
+for (const year of dpcYears) {
+  const facilities = new Map();
+  for (const r of rows(`dpc_facilities_${year}.xlsx`, "施設概要表").slice(1)) {
+    const [id, , muni, , name, type, , , , , , , , , beds] = r;
+    if (!id) continue;
+    facilities.set(String(id), { muni: String(muni ?? "").padStart(5, "0"), name, type, beds: num(beds) });
   }
-  if (Object.keys(counts).length === 0) continue;
-  hospitals.push({ id, name: f.name, muni: f.muni, beds: f.beds, type: f.type, counts });
+  const mdc = rows(`dpc_mdc13_${year}.xlsx`, "MDC13");
+  const diseaseCol = Object.fromEntries(mdc[0].map((v, i) => [v, i]).filter(([v]) => DPC_DISEASES[v]));
+  for (const r of mdc.slice(4)) {
+    const id = String(r[0] ?? "");
+    const f = facilities.get(id);
+    if (!f || !/^\d{5}$/.test(f.muni)) continue;
+    const counts = {};
+    for (const [code, col] of Object.entries(diseaseCol)) {
+      // 99（手術なし）と 97（その他の手術あり）の合計。「-」は10件未満（0件を含む）
+      const cells = [r[col], r[col + 1]];
+      const n = cells.filter((c) => typeof c === "number").reduce((a, b) => a + b, 0);
+      const masked = cells.some((c) => typeof c !== "number");
+      if (n > 0) counts[code] = masked ? [n, 1] : [n];
+    }
+    if (Object.keys(counts).length === 0) continue;
+    const key = `${f.muni}|${normName(f.name)}`;
+    const h = byId.get(key) ?? { id, name: f.name, muni: f.muni, beds: f.beds, type: f.type, counts: {} };
+    h.counts[year] = counts;
+    byId.set(key, h);
+  }
 }
+const hospitals = [...byId.values()];
 
 // ---- 院内がん登録の集計対象（がん診療連携拠点病院かどうか）を病院名で結びつける ----
-const normName = (s) =>
-  shortHospitalName(String(s)).normalize("NFKC").replace(/[s・()（）]/g, "").replace(/^(JA)?[^s]*?厚生連/, "").replace(/総合病院/g, "病院");
 let hbcrMatched = 0;
 try {
   const reg = rows("hbcr_facilities.xlsx", "集計対象施設一覧").slice(2).filter((r) => r[1]);
@@ -179,7 +194,7 @@ const meta = {
   incidenceYears: YEARS,
   populationAsOf: asOf,
   survivalYear: 2018,
-  dpcYear: "令和5年度（2023年4月〜2024年3月退院）",
+  dpcYears,
   sites: SITES.map(({ id, name, icd, dpc, note, detail }) => ({ id, name, icd, dpc, note: note ?? null, derived: Boolean(detail) })),
   shares,
   dpcDiseases: DPC_DISEASES,

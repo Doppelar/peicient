@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dpcValue, formatDpc, rankHospitals, shortHospitalName, spreadOffsets, type Hospital } from "./hospitals";
+import { dpcValue, forYear, formatDpc, rankHospitals, shortHospitalName, spreadOffsets, trendOf, type Hospital, type HospitalByYear } from "./hospitals";
 
 describe("DPCの件数", () => {
   it("伏せられた区分があるときは「以上」を付ける", () => {
@@ -32,5 +32,25 @@ describe("重ならない位置", () => {
     const o = spreadOffsets(4);
     expect(o[0]).toEqual([0, 0]);
     for (const [x, y] of o.slice(1)) expect(Math.hypot(x, y)).toBeGreaterThan(5);
+  });
+});
+
+describe("年度の切り替え", () => {
+  const h: HospitalByYear = {
+    id: "a", name: "A病院", muni: "10208", beds: 0, type: "",
+    counts: { 2023: { "130040": [69] }, 2020: { "130040": [48], "130010": [12, 1] } },
+  };
+
+  it("選んだ年度の件数だけにする（その年度がない病院は除く）", () => {
+    expect(forYear([h], 2020)[0].counts).toEqual({ "130040": [48], "130010": [12, 1] });
+    expect(forYear([h], 2021)).toEqual([]);
+  });
+
+  it("推移は古い年度から並べ、ない年度は undefined", () => {
+    expect(trendOf(h, "130040", [2023, 2021, 2020])).toEqual([
+      { year: 2020, count: [48] },
+      { year: 2021, count: undefined },
+      { year: 2023, count: [69] },
+    ]);
   });
 });

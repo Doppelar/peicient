@@ -9,7 +9,7 @@ import {
   type Rates,
   type Survival,
 } from "./lib/estimate";
-import { formatDpc, rankHospitals, shortHospitalName, type Hospital } from "./lib/hospitals";
+import { fiscalYearLabel, forYear, formatDpc, rankHospitals, shortHospitalName, trendOf, type Hospital, type HospitalByYear } from "./lib/hospitals";
 import { MapView, type MuniValue } from "./map-view";
 
 type Site = { id: string; name: string; icd: string; dpc: string; note: string | null; derived: boolean };
@@ -17,7 +17,7 @@ type Meta = {
   incidenceYears: number[];
   populationAsOf: string;
   survivalYear: number;
-  dpcYear: string;
+  dpcYears: number[];
   sites: Site[];
   shares: Record<string, { m: number; f: number }>;
   dpcDiseases: Record<string, string>;
@@ -29,7 +29,7 @@ type Data = {
   rates: Record<string, Record<string, Rates>>;
   survival: Record<string, Survival>;
   municipalities: Municipality[];
-  hospitals: Hospital[];
+  hospitals: HospitalByYear[];
 };
 
 const DEFAULT_SITE = "mm";
@@ -101,7 +101,9 @@ function Estimator({ data }: { data: Data }) {
     })),
     [inPref, estimates],
   );
-  const hospitals = useMemo(() => rankHospitals(data.hospitals, prefCode, site.dpc), [data.hospitals, prefCode, site.dpc]);
+  const [dpcYear, setDpcYear] = useState(meta.dpcYears[0]);
+  const hospitals = useMemo(() => rankHospitals(forYear(data.hospitals, dpcYear), prefCode, site.dpc), [data.hospitals, dpcYear, prefCode, site.dpc]);
+  const byYear = useMemo(() => new Map(data.hospitals.map((h) => [h.id, h])), [data.hospitals]);
   const muniName = useMemo(() => new Map(data.municipalities.map((m) => [m.code, m.name])), [data.municipalities]);
 
   const chosen = inPref.filter((m) => selected.has(m.code));
@@ -116,7 +118,7 @@ function Estimator({ data }: { data: Data }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
         <label className="space-y-1 text-sm">
           <span className="font-medium text-slate-700">病気</span>
           <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className="h-10 w-full rounded-md border border-slate-300 bg-white px-2">
@@ -136,6 +138,12 @@ function Estimator({ data }: { data: Data }) {
             <label className="flex items-center gap-1"><input type="radio" checked={rateSource === "national"} onChange={() => setRateSource("national")} />全国</label>
           </div>
         </fieldset>
+        <label className="space-y-1 text-sm">
+          <span className="font-medium text-slate-700">病院の件数の年度（DPC）</span>
+          <select value={dpcYear} onChange={(e) => setDpcYear(Number(e.target.value))} className="h-10 w-full rounded-md border border-slate-300 bg-white px-2">
+            {meta.dpcYears.map((y) => <option key={y} value={y}>{fiscalYearLabel(y)}</option>)}
+          </select>
+        </label>
         <fieldset className="space-y-1 text-sm">
           <legend className="font-medium text-slate-700">地図の色</legend>
           <div className="flex h-10 items-center gap-4">
@@ -180,7 +188,7 @@ function Estimator({ data }: { data: Data }) {
           </section>
           <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
             <h2 className="font-semibold">病院（{dpcLabel}の退院件数）</h2>
-            <p className="mb-2 text-xs text-slate-500">{meta.dpcYear}・上位</p>
+            <p className="mb-2 text-xs text-slate-500">{fiscalYearLabel(dpcYear)}・上位</p>
             <ol className="space-y-1">
               {hospitals.slice(0, 15).map((h, i) => (
                 <li key={h.id} className="flex justify-between gap-2">
@@ -199,7 +207,7 @@ function Estimator({ data }: { data: Data }) {
       )}
 
       {tab === "hospitals" && (
-        <HospitalTable hospitals={hospitals} dpc={site.dpc} diseases={meta.dpcDiseases} muniName={muniName} estimates={estimates} dpcYear={meta.dpcYear} />
+        <HospitalTable hospitals={hospitals} dpc={site.dpc} diseases={meta.dpcDiseases} muniName={muniName} estimates={estimates} dpcYear={dpcYear} years={meta.dpcYears} byYear={byYear} />
       )}
 
       <Notes meta={meta} />
@@ -282,15 +290,15 @@ function AreaTable({ rows, wardCodes, estimates, selected, onToggle }: {
   );
 }
 
-function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear }: {
+function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear, years, byYear }: {
   hospitals: Hospital[]; dpc: string; diseases: Record<string, string>; muniName: Map<string, string>;
-  estimates: Map<string, ReturnType<typeof estimate>>; dpcYear: string;
+  estimates: Map<string, ReturnType<typeof estimate>>; dpcYear: number; years: number[]; byYear: Map<string, HospitalByYear>;
 }) {
   const codes = Object.keys(diseases);
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <p className="px-4 py-2 text-xs text-slate-500">
-        厚生労働省 DPC 退院患者調査（{dpcYear}）の退院件数。のべ件数なので、同じ患者さんが何度も入院すると重ねて数えます。10件未満は公表されていないため「—」または「以上」で示します。
+        厚生労働省 DPC 退院患者調査（{fiscalYearLabel(dpcYear)}：{dpcYear}年4月〜{dpcYear + 1}年3月退院）の退院件数。「推移」は選んだ病気の年度ごとの件数です（令和4年度＝2022年度は病院別のデータが見つからないため入っていません）。のべ件数なので、同じ患者さんが何度も入院すると重ねて数えます。10件未満は公表されていないため「—」または「以上」で示します。
       </p>
       <table className="w-full text-sm">
         <thead className="bg-slate-50 text-left text-xs text-slate-500">
@@ -302,6 +310,7 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear 
             {codes.map((c) => (
               <th key={c} className={`px-3 py-2 text-right ${c === dpc ? "text-slate-900" : ""}`}>{diseases[c]}</th>
             ))}
+            <th className="px-3 py-2">推移（{diseases[dpc]}）</th>
             <th className="px-3 py-2 text-right">所在地の推計患者数</th>
           </tr>
         </thead>
@@ -315,6 +324,9 @@ function HospitalTable({ hospitals, dpc, diseases, muniName, estimates, dpcYear 
               {codes.map((c) => (
                 <td key={c} className={`px-3 py-1.5 text-right tabular-nums ${c === dpc ? "font-semibold" : "text-slate-600"}`}>{formatDpc(h.counts[c])}</td>
               ))}
+              <td className="whitespace-nowrap px-3 py-1.5 text-xs tabular-nums text-slate-600">
+                {byYear.get(h.id) ? trendOf(byYear.get(h.id)!, dpc, years).map((t) => `${String(t.year).slice(2)}:${formatDpc(t.count)}`).join(" → ") : "—"}
+              </td>
               <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">
                 {estimates.get(h.muni) ? `${formatCount(estimates.get(h.muni)!.annual.total)}人／年` : "—"}
               </td>
@@ -347,7 +359,7 @@ function Notes({ meta }: { meta: Meta }) {
         <li>病院は DPC 対象病院のみで、地図の丸は病院の所在市区町村の中心付近に置いています（正確な住所ではありません）。患者さんの住所と受診先は一致しないため、推計患者数と病院の件数は別の指標として見てください。</li>
       </ul>
       <p>
-        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
+        出典：国立がん研究センターがん情報サービス「がん統計」（全国がん登録）／総務省「住民基本台帳に基づく人口、人口動態及び世帯数」／厚生労働省「DPC導入の影響評価に係る調査『退院患者調査』の結果報告」（令和2・3・5年度）／国土交通省 国土数値情報（行政区域、SmartNews Media Research Institute による加工データ）。推計値はこのサイトで計算したもので、出典元によるものではありません。
       </p>
     </section>
   );

@@ -51,3 +51,21 @@ export function spreadOffsets(n: number, step = 9): Array<[number, number]> {
     return [Math.round(r * Math.cos(a) * 10) / 10, Math.round(r * Math.sin(a) * 10) / 10];
   });
 }
+
+/** データの形：年度ごとの件数を持つ病院。 */
+export type HospitalByYear = Omit<Hospital, "counts"> & { counts: Record<string, Record<string, DpcCount>> };
+
+/** 年度の表示名（DPC は4月〜翌3月の退院）。 */
+export const fiscalYearLabel = (year: number) => `${year}年度`;
+
+/** 1つの年度の件数だけを持つ病院に変える（その年度の件数がない病院は除く）。 */
+export function forYear(hospitals: readonly HospitalByYear[], year: number): Hospital[] {
+  return hospitals
+    .filter((h) => h.counts[year])
+    .map((h) => ({ ...h, counts: h.counts[year] }));
+}
+
+/** その病気の件数の年度ごとの推移（古い順）。 */
+export function trendOf(h: HospitalByYear, dpc: string, years: readonly number[]): Array<{ year: number; count: DpcCount | undefined }> {
+  return [...years].sort((a, b) => a - b).map((year) => ({ year, count: h.counts[year]?.[dpc] }));
+}
