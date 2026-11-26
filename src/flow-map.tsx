@@ -104,7 +104,7 @@ export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: n
     if (!hospital) placed.set(prefCode, { p: home, far: false });
     const center = new Map([...placed].map(([c, v]) => [c, v.p]));
     const name = new Map(japan.features.map((f) => [f.properties.code, f.properties.name]));
-    return { path, center, name, partners, placed };
+    return { path, center, name, partners, placed, home };
   }, [japan, prefCode, inflow, outflow, hospital, hospitalAt]);
 
   if (!japan) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">地図を読み込み中…</div>;
@@ -112,7 +112,8 @@ export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: n
 
   const max = Math.max(1, ...[...inflow, ...outflow].map((f) => regValue(f.count)));
   const width = (f: PrefFlow) => 1.2 + Math.sqrt(regValue(f.count) / max) * 7;
-  const home = drawn.center.get(prefCode)!;
+  // 矢印の行き先：県全体なら県の中心、病院を選んだら病院の所在地
+  const home = drawn.home;
   const prefName = drawn.name.get(prefCode) ?? "";
   /** 矢印の行き先の名前（県全体なら都道府県、病院を選んだら病院） */
   const selfName = hospital?.name ?? prefName;
@@ -182,7 +183,7 @@ export function FlowMap({ prefCode, flows, year, site, hospital }: { prefCode: n
           ))}
           <circle cx={home[0]} cy={home[1]} r={5} fill="#0f172a" stroke="#fff" strokeWidth={1.5} />
           {hospital && (
-            <text x={home[0]} y={home[1] - 12} textAnchor="middle" fontSize={13} fontWeight={700} fill="#0f172a" stroke="#fff" strokeWidth={3} paintOrder="stroke">{hospital.name}</text>
+            <text x={home[0]} y={home[1] + 20} textAnchor="middle" fontSize={13} fontWeight={700} fill="#0f172a" stroke="#fff" strokeWidth={3} paintOrder="stroke">{hospital.name}</text>
           )}
         </g>
       </svg>
